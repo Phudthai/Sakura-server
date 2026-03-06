@@ -1,0 +1,888 @@
+// ==============================================
+// Sakura Database Schema
+// ==============================================
+// Prisma schema file for PostgreSQL database
+//
+// @description
+// Complete database schema for Japanese product ordering platform
+// Includes: Users, Orders, Payments, Tracking, Notifications, Sessions
+//
+// @docs https://pris.ly/d/prisma-schema
+// @author Sakura Team
+// @created 2026-03-05
+// @lastModified 2026-03-05
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==============================================
+// User Management
+// ==============================================
+
+/// User account
+///
+/// @description
+/// Represents registered users in the system.
+/// Supports three roles: customer (default), admin, staff.
+///
+/// @security
+/// - Password is hashed using bcrypt with 12 rounds
+/// - Email verification required before full access
+/// - Account can be deactivated (soft delete)
+///
+/// @example
+/// ```typescript
+/// const user = await prisma.user.create({
+///   data: {
+///     email: 'user@example.com',
+///     password: await bcrypt.hash('password123', 12),
+///     name: 'John Doe',
+///     phone: '08-1234-5678',
+///   }
+/// })
+/// ```
+model User {
+  /// Primary key - UUID v4
+  /// @format uuid
+  id        String   @id @default(uuid())
+
+  /// User's email address (unique, indexed)
+  /// @format email
+  /// @unique
+  /// @index
+  email     String   @unique
+
+  /// Hashed password (bcrypt with 12 rounds)
+  /// @security Never expose in API responses
+  /// @minLength 60 (bcrypt hash length)
+  password  String
+
+  /// Display name
+  /// @minLength 2
+  /// @maxLength 100
+  name      String
+
+  /// Phone number (Thai format: 0X-XXXX-XXXX)
+  /// @format phone
+  /// @pattern ^0[0-9]{1}-[0-9]{4}-[0-9]{4}$
+  /// @example 08-1234-5678
+  phone     String?
+
+  /// User role (customer, admin, staff)
+  /// @default CUSTOMER
+  /// @enum UserRole
+  role      UserRole @default(CUSTOMER)
+
+  /// Email verification status
+  /// @default false
+  /// @description User must verify email before certain actions
+  isEmailVerified Boolean @default(false)
+
+  /// Account active status
+  /// @default true
+  /// @description Inactive accounts cannot login
+  isActive  Boolean  @default(true)
+
+  /// Record creation timestamp
+  /// @readonly
+  createdAt DateTime @default(now())
+
+  /// Last update timestamp
+  /// @readonly
+  /// @automatic Updated automatically by Prisma
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  /// Orders placed by this user
+  orders         Order[]
+
+  /// Shipping addresses for this user
+  addresses      Address[]
+
+  /// Notifications sent to this user
+  notifications  Notification[]
+
+  /// Active sessions for this user
+  sessions       Session[]
+
+  // Indexes for query performance
+  @@index([email])
+  @@index([createdAt])
+  @@index([role])
+  @@map("users")
+}
+
+/// User roles enum
+///
+/// @description
+/// Defines different user types in the system
+enum UserRole {
+  /// Regular customer (default)
+  /// Can place orders, view own orders, manage own profile
+  CUSTOMER
+
+  /// System administrator
+  /// Full system access, can manage all users and orders
+  ADMIN
+
+  /// Staff member
+  /// Can manage orders, update tracking, process payments
+  STAFF
+}
+
+/// User shipping addresses
+///
+/// @description
+/// Stores multiple addresses per user.
+/// One address can be marked as default.
+///
+/// @example
+/// ```typescript
+/// const address = await prisma.address.create({
+///   data: {
+///     userId: 'user-id',
+///     label: 'Home',
+///     fullAddress: '123 Sukhumvit Road',
+///     province: 'Bangkok',
+///     district: 'Watthana',
+///     postalCode: '10110',
+///     phone: '08-1234-5678',
+///     isDefault: true,
+///   }
+/// })
+/// ```
+model Address {
+  /// Primary key - UUID v4
+  id          String   @id @default(uuid())
+
+  /// Reference to user
+  /// @foreign User.id
+  userId      String
+
+  /// Address label (e.g., "Home", "Office")
+  /// @example Home, Office, Parent's House
+  label       String?
+
+  /// Full address
+  /// @maxLength 500
+  fullAddress String
+
+  /// Province
+  /// @example Bangkok, Chiang Mai
+  province    String
+
+  /// District
+  /// @example Watthana, Muang
+  district    String
+
+  /// Postal code (Thai format: XXXXX)
+  /// @pattern ^[0-9]{5}$
+  /// @example 10110
+  postalCode  String
+
+  /// Phone number for this address
+  /// @format phone
+  phone       String
+
+  /// Default address flag
+  /// @description Only one address per user should be default
+  isDefault   Boolean  @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  /// User who owns this address
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isDefault])
+  @@map("addresses")
+}
+
+// ==============================================
+// Order Management
+// ==============================================
+
+/// Customer orders
+///
+/// @description
+/// Main order entity containing items from Japanese marketplaces.
+/// Goes through multiple statuses from draft to completed.
+///
+/// @workflow
+/// 1. DRAFT → Customer adds items
+/// 2. PENDING_PAYMENT → Customer submits order
+/// 3. PAID → Payment successful
+/// 4. PROCESSING → Admin purchases from Japan
+/// 5. PURCHASED → Items purchased in Japan
+/// 6. SHIPPED_TO_TH → Shipped from Japan
+/// 7. ARRIVED_TH → Arrived at Thailand warehouse
+/// 8. READY_TO_SHIP → Ready to ship to customer
+/// 9. SHIPPED_TO_CUSTOMER → Shipped to customer
+/// 10. COMPLETED → Customer received items
+///
+/// @example
+/// ```typescript
+/// const order = await prisma.order.create({
+///   data: {
+///     userId: 'user-id',
+///     orderNumber: 'SK-2026-00001',
+///     status: 'PENDING_PAYMENT',
+///     totalJPY: 5000,
+///     totalTHB: 1200,
+///     exchangeRate: 0.24,
+///     serviceFee: 180,
+///     shippingCost: 200,
+///     items: {
+///       create: [
+///         {
+///           productName: 'Nintendo Switch Game',
+///           productUrl: 'https://...',
+///           priceJPY: 5000,
+///           quantity: 1,
+///         }
+///       ]
+///     }
+///   },
+///   include: { items: true }
+/// })
+/// ```
+model Order {
+  /// Primary key - UUID v4
+  id              String       @id @default(uuid())
+
+  /// Reference to user who placed this order
+  /// @foreign User.id
+  userId          String
+
+  /// Order number for display
+  /// @unique
+  /// @format SK-YYYY-NNNNN
+  /// @example SK-2026-00001
+  orderNumber     String       @unique
+
+  /// Current order status
+  /// @enum OrderStatus
+  /// @default DRAFT
+  status          OrderStatus  @default(DRAFT)
+
+  /// Total amount in Japanese Yen (¥)
+  /// @currency JPY
+  /// @decimal(10,2)
+  totalJPY        Decimal      @db.Decimal(10, 2)
+
+  /// Total amount in Thai Baht (฿)
+  /// @currency THB
+  /// @decimal(10,2)
+  totalTHB        Decimal      @db.Decimal(10, 2)
+
+  /// Exchange rate used (JPY to THB)
+  /// @description Rate at the time of order creation
+  /// @example 0.24 means 1 JPY = 0.24 THB
+  /// @decimal(6,4)
+  exchangeRate    Decimal      @db.Decimal(6, 4)
+
+  /// Service fee (15% of total)
+  /// @currency THB
+  /// @decimal(10,2)
+  serviceFee      Decimal      @db.Decimal(10, 2)
+
+  /// Shipping cost
+  /// @currency THB
+  /// @decimal(10,2)
+  /// @description Calculated based on weight
+  shippingCost    Decimal      @db.Decimal(10, 2)
+
+  /// Discount amount
+  /// @currency THB
+  /// @decimal(10,2)
+  /// @default 0
+  discount        Decimal      @db.Decimal(10, 2) @default(0)
+
+  /// Discount code used
+  /// @example SUMMER2026, WELCOME10
+  discountCode    String?
+
+  /// Shipping address ID
+  /// @foreign Address.id
+  /// @description Reference to user's address
+  shippingAddressId String?
+
+  /// Special instructions from customer
+  /// @maxLength 1000
+  notes           String?
+
+  /// Payment completion timestamp
+  /// @description When payment was successfully processed
+  paidAt          DateTime?
+
+  /// Order completion timestamp
+  /// @description When customer received the items
+  completedAt     DateTime?
+
+  /// Cancellation timestamp
+  cancelledAt     DateTime?
+
+  /// Cancellation reason
+  /// @example Out of stock, Customer request
+  cancellationReason String?
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  // Relations
+  /// User who placed this order
+  user            User         @relation(fields: [userId], references: [id])
+
+  /// Items in this order
+  items           OrderItem[]
+
+  /// Payment records for this order
+  payments        Payment[]
+
+  /// Tracking information (one-to-one)
+  tracking        Tracking?
+
+  // Indexes
+  @@index([userId])
+  @@index([orderNumber])
+  @@index([status])
+  @@index([createdAt])
+  @@index([paidAt])
+  @@map("orders")
+}
+
+/// Order status enum
+///
+/// @description
+/// All possible statuses an order can have
+enum OrderStatus {
+  DRAFT              /// Draft - not yet submitted
+  PENDING_PAYMENT    /// Waiting for payment
+  PAID               /// Payment received
+  PROCESSING         /// Being processed (purchasing from Japan)
+  PURCHASED          /// Purchased from Japanese marketplace
+  SHIPPED_TO_TH      /// Shipped to Thailand
+  ARRIVED_TH         /// Arrived in Thailand warehouse
+  READY_TO_SHIP      /// Ready to ship to customer
+  SHIPPED_TO_CUSTOMER /// Shipped to customer
+  COMPLETED          /// Order completed
+  CANCELLED          /// Order cancelled
+  REFUNDED           /// Payment refunded
+}
+
+/// Order items
+///
+/// @description
+/// Individual items in an order.
+/// Each item represents a product from a Japanese marketplace.
+///
+/// @example
+/// ```typescript
+/// const item = await prisma.orderItem.create({
+///   data: {
+///     orderId: 'order-id',
+///     productName: 'Nintendo Switch Game',
+///     productUrl: 'https://www.amazon.co.jp/...',
+///     imageUrl: 'https://...',
+///     priceJPY: 5000,
+///     quantity: 2,
+///     variant: 'Standard Edition',
+///     color: 'Red',
+///   }
+/// })
+/// ```
+model OrderItem {
+  /// Primary key - UUID v4
+  id          String   @id @default(uuid())
+
+  /// Reference to order
+  /// @foreign Order.id
+  orderId     String
+
+  /// Product name
+  /// @maxLength 500
+  productName String
+
+  /// Product URL from Japanese marketplace
+  /// @format url
+  /// @example https://www.amazon.co.jp/dp/B08H93ZRK9
+  productUrl  String
+
+  /// Product image URL
+  /// @format url
+  imageUrl    String?
+
+  /// Price per unit in JPY
+  /// @currency JPY
+  /// @decimal(10,2)
+  priceJPY    Decimal  @db.Decimal(10, 2)
+
+  /// Quantity
+  /// @min 1
+  quantity    Int
+
+  /// Size/variant information
+  /// @example Standard Edition, Deluxe, Size M
+  variant     String?
+
+  /// Color
+  /// @example Red, Blue, Black
+  color       String?
+
+  /// Item notes
+  /// @maxLength 500
+  /// @example Please wrap as a gift
+  notes       String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  /// Order this item belongs to
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+// ==============================================
+// Payment Management
+// ==============================================
+
+/// Payment records
+///
+/// @description
+/// Tracks all payment transactions via Omise payment gateway.
+/// Implements idempotency to prevent duplicate charges.
+///
+/// @security
+/// - Uses idempotency keys for duplicate prevention
+/// - Stores provider charge IDs for reconciliation
+/// - Supports refunds with full audit trail
+///
+/// @example
+/// ```typescript
+/// const payment = await prisma.payment.create({
+///   data: {
+///     orderId: 'order-id',
+///     amount: 1580,
+///     currency: 'THB',
+///     method: 'CREDIT_CARD',
+///     status: 'PENDING',
+///     provider: 'omise',
+///     idempotencyKey: `order-id-${Date.now()}-${randomBytes(8)}`,
+///   }
+/// })
+/// ```
+model Payment {
+  /// Primary key - UUID v4
+  id              String        @id @default(uuid())
+
+  /// Reference to order
+  /// @foreign Order.id
+  orderId         String
+
+  /// Amount paid in THB
+  /// @currency THB
+  /// @decimal(10,2)
+  amount          Decimal       @db.Decimal(10, 2)
+
+  /// Currency (always THB for now)
+  /// @default THB
+  currency        String        @default("THB")
+
+  /// Payment method
+  /// @enum PaymentMethod
+  method          PaymentMethod
+
+  /// Payment status
+  /// @enum PaymentStatus
+  /// @default PENDING
+  status          PaymentStatus @default(PENDING)
+
+  /// Payment provider
+  /// @default omise
+  /// @example omise, stripe
+  provider        String        @default("omise")
+
+  /// Provider's charge/transaction ID
+  /// @unique
+  /// @example chrg_test_5v7oa9q3k97djpky7wl
+  providerChargeId String?      @unique
+
+  /// Idempotency key for duplicate prevention
+  /// @unique
+  /// @security Critical for preventing duplicate charges
+  /// @format {orderId}-{timestamp}-{random}
+  idempotencyKey  String        @unique
+
+  /// Payment completion timestamp
+  paidAt          DateTime?
+
+  /// Failure reason (if failed)
+  /// @example Insufficient funds, Card declined
+  failureReason   String?
+
+  /// Refund amount (if refunded)
+  /// @currency THB
+  /// @decimal(10,2)
+  refundAmount    Decimal?      @db.Decimal(10, 2)
+
+  /// Refund timestamp
+  refundedAt      DateTime?
+
+  /// Refund reason
+  /// @example Customer request, Order cancelled
+  refundReason    String?
+
+  /// Additional metadata (JSON)
+  /// @description Store provider-specific data
+  /// @example { "card_brand": "visa", "last_digits": "4242" }
+  metadata        Json?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  /// Order this payment is for
+  order           Order         @relation(fields: [orderId], references: [id])
+
+  // Indexes
+  @@index([orderId])
+  @@index([providerChargeId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("payments")
+}
+
+/// Payment method enum
+///
+/// @description
+/// Supported payment methods via Omise
+enum PaymentMethod {
+  CREDIT_CARD      /// Credit card
+  DEBIT_CARD       /// Debit card
+  PROMPTPAY        /// PromptPay QR
+  BANK_TRANSFER    /// Bank transfer
+  TRUEMONEY        /// TrueMoney Wallet
+  RABBIT_LINE_PAY  /// Rabbit LINE Pay
+}
+
+/// Payment status enum
+///
+/// @description
+/// All possible payment statuses
+enum PaymentStatus {
+  PENDING     /// Pending payment
+  PROCESSING  /// Payment processing
+  COMPLETED   /// Payment successful
+  FAILED      /// Payment failed
+  REFUNDED    /// Payment refunded
+  CANCELLED   /// Payment cancelled
+}
+
+// ==============================================
+// Tracking System
+// ==============================================
+
+/// Order tracking
+///
+/// @description
+/// Real-time tracking information for orders.
+/// One-to-one relationship with Order.
+///
+/// @example
+/// ```typescript
+/// const tracking = await prisma.tracking.create({
+///   data: {
+///     orderId: 'order-id',
+///     status: 'ORDER_PLACED',
+///     trackingNumber: 'TH123456789JP',
+///     carrier: 'Japan Post',
+///     estimatedDelivery: new Date('2026-03-15'),
+///     events: {
+///       create: {
+///         status: 'ORDER_PLACED',
+///         description: 'Order has been placed',
+///         location: 'Bangkok, Thailand',
+///       }
+///     }
+///   },
+///   include: { events: true }
+/// })
+/// ```
+model Tracking {
+  /// Primary key - UUID v4
+  id              String          @id @default(uuid())
+
+  /// Reference to order (one-to-one)
+  /// @foreign Order.id
+  /// @unique One tracking per order
+  orderId         String          @unique
+
+  /// Current tracking status
+  /// @enum TrackingStatus
+  /// @default ORDER_PLACED
+  status          TrackingStatus  @default(ORDER_PLACED)
+
+  /// Tracking number from shipping carrier
+  /// @unique
+  /// @example TH123456789JP, EMS123456789
+  trackingNumber  String?         @unique
+
+  /// Shipping carrier
+  /// @example Japan Post, DHL, FedEx
+  carrier         String?
+
+  /// Estimated delivery date
+  estimatedDelivery DateTime?
+
+  /// Actual delivery date
+  deliveredAt     DateTime?
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relations
+  /// Order being tracked
+  order           Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  /// Timeline of tracking events
+  events          TrackingEvent[]
+
+  // Indexes
+  @@index([orderId])
+  @@index([trackingNumber])
+  @@index([status])
+  @@map("tracking")
+}
+
+/// Tracking status enum
+///
+/// @description
+/// All possible tracking statuses
+enum TrackingStatus {
+  ORDER_PLACED       /// Order placed
+  PROCESSING         /// Processing order
+  PURCHASED          /// Item purchased
+  PACKED             /// Item packed
+  SHIPPED_FROM_JP    /// Shipped from Japan
+  IN_TRANSIT         /// In transit
+  CUSTOMS_CLEARANCE  /// Customs clearance
+  ARRIVED_WAREHOUSE  /// Arrived at warehouse
+  READY_FOR_DELIVERY /// Ready for delivery
+  OUT_FOR_DELIVERY   /// Out for delivery
+  DELIVERED          /// Delivered
+  FAILED_DELIVERY    /// Failed delivery
+}
+
+/// Tracking events
+///
+/// @description
+/// Timeline of tracking updates.
+/// Each event represents a status change or location update.
+///
+/// @example
+/// ```typescript
+/// const event = await prisma.trackingEvent.create({
+///   data: {
+///     trackingId: 'tracking-id',
+///     status: 'IN_TRANSIT',
+///     description: 'Package in transit from Tokyo to Bangkok',
+///     location: 'Narita Airport, Japan',
+///     eventAt: new Date(),
+///   }
+/// })
+/// ```
+model TrackingEvent {
+  /// Primary key - UUID v4
+  id          String         @id @default(uuid())
+
+  /// Reference to tracking
+  /// @foreign Tracking.id
+  trackingId  String
+
+  /// Event status
+  /// @enum TrackingStatus
+  status      TrackingStatus
+
+  /// Event description
+  /// @maxLength 500
+  /// @example Package arrived at sorting center
+  description String
+
+  /// Event location
+  /// @example Bangkok, Thailand
+  location    String?
+
+  /// Event timestamp
+  /// @description When this event occurred
+  eventAt     DateTime       @default(now())
+
+  /// Record creation timestamp
+  createdAt   DateTime       @default(now())
+
+  // Relations
+  /// Tracking this event belongs to
+  tracking    Tracking       @relation(fields: [trackingId], references: [id], onDelete: Cascade)
+
+  // Indexes
+  @@index([trackingId])
+  @@index([eventAt])
+  @@map("tracking_events")
+}
+
+// ==============================================
+// Notifications
+// ==============================================
+
+/// User notifications
+///
+/// @description
+/// In-app notifications for users.
+/// Tracks read/unread status.
+///
+/// @example
+/// ```typescript
+/// const notification = await prisma.notification.create({
+///   data: {
+///     userId: 'user-id',
+///     type: 'ORDER_UPDATE',
+///     title: 'Order Shipped',
+///     message: 'Your order #SK-2026-00001 has been shipped',
+///     resourceId: 'order-id',
+///   }
+/// })
+/// ```
+model Notification {
+  /// Primary key - UUID v4
+  id        String           @id @default(uuid())
+
+  /// Reference to user
+  /// @foreign User.id
+  userId    String
+
+  /// Notification type
+  /// @enum NotificationType
+  type      NotificationType
+
+  /// Notification title
+  /// @maxLength 200
+  /// @example Order Shipped, Payment Successful
+  title     String
+
+  /// Notification message
+  /// @maxLength 1000
+  message   String
+
+  /// Related resource ID
+  /// @description ID of related order, payment, etc.
+  /// @example order-id, payment-id
+  resourceId String?
+
+  /// Read status
+  /// @default false
+  isRead    Boolean          @default(false)
+
+  /// Read timestamp
+  readAt    DateTime?
+
+  createdAt DateTime         @default(now())
+
+  // Relations
+  /// User who receives this notification
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Indexes
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+/// Notification type enum
+///
+/// @description
+/// Types of notifications users can receive
+enum NotificationType {
+  ORDER_UPDATE     /// Order status update
+  PAYMENT_UPDATE   /// Payment status update
+  TRACKING_UPDATE  /// Tracking update
+  SYSTEM           /// System notification
+  PROMOTION        /// Promotional notification
+}
+
+// ==============================================
+// Sessions
+// ==============================================
+
+/// User sessions
+///
+/// @description
+/// Stores active user sessions.
+/// Used for JWT token management and session tracking.
+/// Redis is primary session store, this is fallback/audit.
+///
+/// @security
+/// - Token should be JWT
+/// - Implement token rotation
+/// - Clean up expired sessions regularly
+///
+/// @example
+/// ```typescript
+/// const session = await prisma.session.create({
+///   data: {
+///     userId: 'user-id',
+///     token: 'jwt-token-here',
+///     userAgent: req.get('user-agent'),
+///     ipAddress: req.ip,
+///     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+///   }
+/// })
+/// ```
+model Session {
+  /// Primary key - UUID v4
+  id        String   @id @default(uuid())
+
+  /// Reference to user
+  /// @foreign User.id
+  userId    String
+
+  /// Session token (JWT)
+  /// @unique
+  /// @security Store hash in production
+  token     String   @unique
+
+  /// User agent
+  /// @example Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)
+  userAgent String?
+
+  /// IP address
+  /// @example 192.168.1.1
+  ipAddress String?
+
+  /// Session expiry
+  /// @description After this date, session is invalid
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  /// User who owns this session
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Indexes
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@map("sessions")
+}
