@@ -15,9 +15,7 @@ import { z } from 'zod'
  * @description
  * Validates user registration input with the following rules:
  * - Email: Valid email format, lowercase, max 255 chars
- * - Password: Min 8 chars, must contain uppercase, lowercase, number, special char
  * - Name: Min 2 chars, max 100 chars
- * - Phone: Thai phone format (0X-XXXX-XXXX)
  *
  * @example
  * ```typescript
@@ -34,13 +32,7 @@ export const registerSchema = z.object({
     .toLowerCase()
     .max(255, 'Email too long'),
 
-  password: z
-    .string({ required_error: 'Password is required' })
-    .min(8, 'Password must be at least 8 characters')
-    .regex(
-      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/,
-      'Password must contain uppercase, lowercase, number, and special character'
-    ),
+  password: z.string({ required_error: 'Password is required' }),
 
   name: z
     .string({ required_error: 'Name is required' })
@@ -48,10 +40,13 @@ export const registerSchema = z.object({
     .max(100, 'Name too long')
     .regex(/^[a-zA-Zก-๙\s]+$/, 'Name can only contain letters'),
 
-  phone: z
-    .string()
-    .regex(/^0[0-9]{1}-[0-9]{4}-[0-9]{4}$/, 'Phone must be in format: 0X-XXXX-XXXX')
-    .optional(),
+  phone: z.string().optional(),
+
+  /** Maps to user_code in DB */
+  username: z.string().max(100).optional(),
+
+  /** Maps to external_id in DB */
+  userId: z.string().max(255).optional(),
 })
 
 /**

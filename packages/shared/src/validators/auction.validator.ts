@@ -35,6 +35,14 @@ export const rejectBidSchema = z.object({
   reason: z.string().min(1, 'Reason is required').max(500),
 })
 
+export const submitBidSchema = z.object({
+  price: z.number().int().positive('ราคา bid ต้องเป็นตัวเลขบวก'),
+})
+
+export const mockAuctionSchema = z.object({
+  action: z.enum(['outbid', 'end-time']),
+})
+
 export const createStaffSchema = z.object({
   name: z.string().min(1, 'Name is required').max(255),
 })
@@ -48,5 +56,7 @@ export type UpdateAuctionStatusInput = z.infer<typeof updateAuctionStatusSchema>
 export type UpdateAuctionNoteInput = z.infer<typeof updateAuctionNoteSchema>
 export type ApproveBidInput = z.infer<typeof approveBidSchema>
 export type RejectBidInput = z.infer<typeof rejectBidSchema>
+export type SubmitBidInput = z.infer<typeof submitBidSchema>
+export type MockAuctionInput = z.infer<typeof mockAuctionSchema>
 export type CreateStaffInput = z.infer<typeof createStaffSchema>
 export type UpdateStaffInput = z.infer<typeof updateStaffSchema>

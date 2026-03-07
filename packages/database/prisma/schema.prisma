@@ -61,6 +61,7 @@ model AuctionRequest {
   status       String    @default("pending")
   currentPrice Int?
   note         String?
+  bidResult    String?   @map("bid_result")
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

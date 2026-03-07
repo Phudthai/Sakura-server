@@ -20,9 +20,9 @@ export function startAuctionCron(): void {
   cron.schedule(schedule, async () => {
     console.log('[AuctionCron] Running price check...')
 
-    // Fetch all pending + tracking requests that haven't ended yet
+    // Fetch all pending requests that haven't ended yet
     const actives = await prisma.auctionRequest.findMany({
-      where: { status: { in: ['pending', 'tracking'] }, endTime: { gt: new Date() } },
+      where: { status: 'pending', endTime: { gt: new Date() } },
     })
 
     const testMode = process.env.AUCTION_CRON_TEST_MODE === 'true'
@@ -62,14 +62,29 @@ export function startAuctionCron(): void {
       }
     }
 
-    // Close expired requests
-    const closed = await prisma.auctionRequest.updateMany({
-      where: { status: 'tracking', endTime: { lte: new Date() } },
-      data: { status: 'closed' },
+    // Complete expired requests + set bidResult
+    const expired = await prisma.auctionRequest.findMany({
+      where: { status: 'pending', endTime: { lte: new Date() } },
     })
 
-    if (closed.count > 0) {
-      console.log(`[AuctionCron] Closed ${closed.count} expired auction(s)`)
+    for (const ar of expired) {
+      const lastApprovedBid = await prisma.auctionPriceLog.findFirst({
+        where: { auctionRequestId: ar.id, status: 'approved' },
+        orderBy: { recordedAt: 'desc' },
+      })
+
+      const bidResult = lastApprovedBid && lastApprovedBid.price >= (ar.currentPrice ?? 0) ? 'won' : 'lost'
+
+      await prisma.auctionRequest.update({
+        where: { id: ar.id },
+        data: { status: 'completed', bidResult },
+      })
+
+      console.log(`[AuctionCron] Completed #${ar.id} — bidResult: ${bidResult}`)
+    }
+
+    if (expired.length > 0) {
+      console.log(`[AuctionCron] Completed ${expired.length} expired auction(s)`)
     }
 
     console.log(`[AuctionCron] Done — checked ${actives.length} active auction(s)`)

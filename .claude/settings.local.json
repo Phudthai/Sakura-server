@@ -8,7 +8,8 @@
       "Bash(npx prisma migrate dev --name change-user-id-to-int --create-only)",
       "Bash(npx prisma db push --accept-data-loss)",
       "Bash(npx prisma db seed)",
-      "Bash(npx prisma db push --force-reset)"
+      "Bash(npx prisma db push --force-reset)",
+      "Bash(npx prisma db push)"
     ]
   }
 }
