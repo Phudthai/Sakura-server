@@ -69,7 +69,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"admin@sakura.local\",\n  \"password\": \"Admin123!\"\n}"
+              "raw": "{\n  \"email\": \"admin@sakura.com\",\n  \"password\": \"password123\"\n}"
             },
             "url": "{{baseUrl}}/api/auth/login",
             "description": "ล็อกอิน — หลังสำเร็จ token จะถูกเซ็ตใน collection variable อัตโนมัติ (ใช้กับ Me และ Auction endpoints)"
