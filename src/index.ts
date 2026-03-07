@@ -7,6 +7,7 @@
  * @created 2026-03-05
  */
 
+import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import { prisma } from '../packages/database/src'
@@ -16,7 +17,7 @@ import backofficeRouter from './routes/backoffice.routes'
 import { startAuctionCron } from './jobs/auction-cron.job'
 
 const app = express()
-const PORT = process.env.API_PORT || 4000
+const PORT = process.env.PORT || process.env.API_PORT || 4000
 
 // Middleware
 app.use(cors())
