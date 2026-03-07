@@ -24,13 +24,12 @@ async function main() {
 
   console.log('👤 Creating users...')
 
-  const adminPassword = await hash('Admin123!', 12)
-  const userPassword = await hash('password123', 12)
+  const password = await hash('password123', 12)
 
   const admin = await prisma.user.create({
     data: {
-      email: 'admin@sakura.local',
-      password: adminPassword,
+      email: 'admin@sakura.com',
+      password,
       name: 'Admin User',
       phone: '08-1111-1111',
       role: UserRole.ADMIN,
@@ -44,8 +43,8 @@ async function main() {
 
   const staffUser = await prisma.user.create({
     data: {
-      email: 'staff@sakura.local',
-      password: userPassword,
+      email: 'staff@sakura.com',
+      password,
       name: 'Staff User',
       phone: '08-2222-2222',
       role: UserRole.STAFF,
@@ -57,8 +56,8 @@ async function main() {
 
   await prisma.user.create({
     data: {
-      email: 'customer@example.com',
-      password: userPassword,
+      email: 'customer@sakura.com',
+      password,
       name: 'John Doe',
       phone: '08-3333-3333',
       role: UserRole.CUSTOMER,
@@ -66,7 +65,7 @@ async function main() {
       isActive: true,
     },
   })
-  console.log('✅ Customer: customer@example.com')
+  console.log('✅ Customer: customer@sakura.com')
 
   console.log('👥 Creating staffs...')
   await prisma.staff.createMany({
@@ -78,10 +77,10 @@ async function main() {
   console.log('✅ Staffs created')
 
   console.log('\n✅ Seeding completed!')
-  console.log('\n🔐 Test Credentials:')
-  console.log('Admin: admin@sakura.local / Admin123!')
-  console.log('Staff: staff@sakura.local / password123')
-  console.log('Customer: customer@example.com / password123')
+  console.log('\n🔐 Test Credentials (password: password123):')
+  console.log('Admin: admin@sakura.com')
+  console.log('Staff: staff@sakura.com')
+  console.log('Customer: customer@sakura.com')
 }
 
 main()
