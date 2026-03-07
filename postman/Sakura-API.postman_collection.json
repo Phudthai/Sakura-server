@@ -1,0 +1,267 @@
+{
+  "info": {
+    "name": "Sakura API",
+    "description": "Sakura Backend API — Auth, Auction Requests, Backoffice, Health",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000" },
+    { "key": "token", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health & DB",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/health",
+            "description": "ตรวจสอบว่า API server ทำงานอยู่"
+          }
+        },
+        {
+          "name": "Test DB Connection",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/test-db",
+            "description": "ทดสอบการเชื่อมต่อฐานข้อมูล"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"customer@example.com\",\n  \"password\": \"SecurePass123!\",\n  \"name\": \"สมชาย ใจดี\",\n  \"phone\": \"08-1234-5678\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/register",
+            "description": "สมัครสมาชิก — password ต้องมีตัวพิมพ์ใหญ่ เล็ก ตัวเลข และอักขระพิเศษ อย่างน้อย 8 ตัว"
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.success && res.data && res.data.token) {",
+                  "  pm.collectionVariables.set('token', res.data.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@sakura.local\",\n  \"password\": \"Admin123!\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "ล็อกอิน — หลังสำเร็จ token จะถูกเซ็ตใน collection variable อัตโนมัติ (ใช้กับ Me และ Auction endpoints)"
+          }
+        },
+        {
+          "name": "Me (Current User)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{baseUrl}}/api/auth/me",
+            "description": "ดูข้อมูล user ปัจจุบัน — ต้องมี Bearer token"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auction Requests",
+      "item": [
+        {
+          "name": "Create Auction Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://page.auctions.yahoo.co.jp/jp/auction/x1234567890\",\n  \"firstBidPrice\": 50000\n}"
+            },
+            "url": "{{baseUrl}}/api/auction-requests",
+            "description": "ส่ง URL ประมูล Yahoo → ดึงข้อมูล + บันทึก DB. Auth ไม่บังคับ (ถ้ามี token จะผูก user_id)"
+          }
+        },
+        {
+          "name": "List Auction Requests",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auction-requests?page=1&limit=20&status=",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auction-requests"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "status", "value": "", "disabled": true }
+              ]
+            },
+            "description": "รายการคำขอประมูล — Admin/Staff เห็นทั้งหมด, User เห็นเฉพาะของตัวเอง. Query: page, limit, status (pending/tracking/closed/cancelled)"
+          }
+        },
+        {
+          "name": "Get Price Logs",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{baseUrl}}/api/auction-requests/1/price-logs",
+            "description": "ประวัติราคาของคำขอนั้น — แทน :id ด้วย auction request id จริง"
+          }
+        },
+        {
+          "name": "Update Auction Note (Admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"หมายเหตุจาก Backoffice\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auction-requests/1/note",
+            "description": "อัปเดต note เฉพาะ — Admin/Staff. ส่ง null เพื่อลบ note"
+          }
+        },
+        {
+          "name": "Update Auction Status (Admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"tracking\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auction-requests/1",
+            "description": "อัปเดต status — เฉพาะ Admin/Staff. status: tracking | closed | cancelled. แทน id ใน path ด้วย id จริง"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Backoffice",
+      "item": [
+        {
+          "name": "List Pending Bids",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{baseUrl}}/api/backoffice/pending-bids",
+            "description": "รายการ bid ที่รอ approve — เฉพาะ Admin/Staff"
+          }
+        },
+        {
+          "name": "Approve Bid",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"biddedBy\": 1\n}"
+            },
+            "url": "{{baseUrl}}/api/backoffice/bids/1/approve",
+            "description": "อนุมัติ bid — ใส่ staff id ที่จะเป็นคนบิด. แทน :id ด้วย bid id จริง"
+          }
+        },
+        {
+          "name": "Reject Bid",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"ราคาสูงเกินไป\"\n}"
+            },
+            "url": "{{baseUrl}}/api/backoffice/bids/1/reject",
+            "description": "ปฏิเสธ bid พร้อมเหตุผล. แทน :id ด้วย bid id จริง"
+          }
+        },
+        {
+          "name": "List Staffs",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{baseUrl}}/api/backoffice/staffs",
+            "description": "รายชื่อ staff ทั้งหมด — ใช้เลือกตอน approve bid"
+          }
+        },
+        {
+          "name": "Create Staff",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"สมชาย\"\n}"
+            },
+            "url": "{{baseUrl}}/api/backoffice/staffs",
+            "description": "สร้าง staff ใหม่ — เฉพาะ Admin"
+          }
+        },
+        {
+          "name": "Update Staff",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"สมชาย แก้ไขแล้ว\"\n}"
+            },
+            "url": "{{baseUrl}}/api/backoffice/staffs/1",
+            "description": "แก้ไขชื่อ staff — เฉพาะ Admin. แทน :id ด้วย staff id จริง"
+          }
+        }
+      ]
+    }
+  ]
+}

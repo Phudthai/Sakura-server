@@ -3,6 +3,7 @@ import { compare, hash } from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { prisma } from "../../packages/database/src";
 import { loginSchema, registerSchema } from "../../packages/shared/src";
+import { requireAuth } from '../middleware/auth.middleware'
 
 
 const router = Router()
@@ -10,7 +11,7 @@ const router = Router()
 const JWT_SECRET = process.env.JWT_SECRET ?? 'sakura-dev-secret-change-in-production'
 const JWT_EXPIRES_IN = '7d'
 
-function signToken(payload: { userId: string; email: string; role: string }): string {
+function signToken(payload: { userId: number; email: string; role: string }): string {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN })
 }
 
@@ -94,6 +95,23 @@ router.post('/register', async (req: Request, res: Response) => {
     })
   } catch (error) {
     console.error('[Register Error]', error)
+    return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Something went wrong. Please try again.' } })
+  }
+})
+
+// GET /api/auth/me
+router.get('/me', requireAuth(), async (req: Request, res: Response) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user!.userId },
+      select: { id: true, email: true, name: true, phone: true, role: true, isEmailVerified: true, createdAt: true },
+    })
+    if (!user) {
+      return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } })
+    }
+    return res.json({ success: true, data: { user } })
+  } catch (error) {
+    console.error('[Me Error]', error)
     return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Something went wrong. Please try again.' } })
   }
 })

@@ -48,9 +48,18 @@ datasource db {
 /// })
 /// ```
 model User {
-  /// Primary key - UUID v4
-  /// @format uuid
-  id        String   @id @default(uuid())
+  /// Primary key — auto-increment integer
+  id        Int      @id @default(autoincrement())
+
+  /// External / legacy user code for migration from old system
+  /// @unique
+  /// @example "CUST-00123", old UUID, Line UID, etc.
+  userCode    String?  @unique @map("user_code")
+
+  /// External ID from legacy system (for customer migration)
+  /// @unique
+  /// @example old system customer ID, 3rd-party platform ID
+  externalId  String?  @unique @map("external_id")
 
   /// User's email address (unique, indexed)
   /// @format email
@@ -109,7 +118,10 @@ model User {
   notifications  Notification[]
 
   /// Active sessions for this user
-  sessions       Session[]
+  sessions          Session[]
+
+  /// Auction tracking requests by this user
+  auctionRequests   AuctionRequest[]
 
   // Indexes for query performance
   @@index([email])
@@ -158,12 +170,12 @@ enum UserRole {
 /// })
 /// ```
 model Address {
-  /// Primary key - UUID v4
-  id          String   @id @default(uuid())
+  /// Primary key — auto-increment integer
+  id          Int      @id @default(autoincrement())
 
   /// Reference to user
   /// @foreign User.id
-  userId      String
+  userId      Int
 
   /// Address label (e.g., "Home", "Office")
   /// @example Home, Office, Parent's House
@@ -255,12 +267,12 @@ model Address {
 /// })
 /// ```
 model Order {
-  /// Primary key - UUID v4
-  id              String       @id @default(uuid())
+  /// Primary key — auto-increment integer
+  id              Int          @id @default(autoincrement())
 
   /// Reference to user who placed this order
   /// @foreign User.id
-  userId          String
+  userId          Int
 
   /// Order number for display
   /// @unique
@@ -313,7 +325,7 @@ model Order {
   /// Shipping address ID
   /// @foreign Address.id
   /// @description Reference to user's address
-  shippingAddressId String?
+  shippingAddressId Int?
 
   /// Special instructions from customer
   /// @maxLength 1000
@@ -400,12 +412,12 @@ enum OrderStatus {
 /// })
 /// ```
 model OrderItem {
-  /// Primary key - UUID v4
-  id          String   @id @default(uuid())
+  /// Primary key — auto-increment integer
+  id          Int      @id @default(autoincrement())
 
   /// Reference to order
   /// @foreign Order.id
-  orderId     String
+  orderId     Int
 
   /// Product name
   /// @maxLength 500
@@ -483,12 +495,12 @@ model OrderItem {
 /// })
 /// ```
 model Payment {
-  /// Primary key - UUID v4
-  id              String        @id @default(uuid())
+  /// Primary key — auto-increment integer
+  id              Int           @id @default(autoincrement())
 
   /// Reference to order
   /// @foreign Order.id
-  orderId         String
+  orderId         Int
 
   /// Amount paid in THB
   /// @currency THB
@@ -620,13 +632,13 @@ enum PaymentStatus {
 /// })
 /// ```
 model Tracking {
-  /// Primary key - UUID v4
-  id              String          @id @default(uuid())
+  /// Primary key — auto-increment integer
+  id              Int             @id @default(autoincrement())
 
   /// Reference to order (one-to-one)
   /// @foreign Order.id
   /// @unique One tracking per order
-  orderId         String          @unique
+  orderId         Int             @unique
 
   /// Current tracking status
   /// @enum TrackingStatus
@@ -703,12 +715,12 @@ enum TrackingStatus {
 /// })
 /// ```
 model TrackingEvent {
-  /// Primary key - UUID v4
-  id          String         @id @default(uuid())
+  /// Primary key — auto-increment integer
+  id          Int            @id @default(autoincrement())
 
   /// Reference to tracking
   /// @foreign Tracking.id
-  trackingId  String
+  trackingId  Int
 
   /// Event status
   /// @enum TrackingStatus
@@ -763,12 +775,12 @@ model TrackingEvent {
 /// })
 /// ```
 model Notification {
-  /// Primary key - UUID v4
-  id        String           @id @default(uuid())
+  /// Primary key — auto-increment integer
+  id        Int              @id @default(autoincrement())
 
   /// Reference to user
   /// @foreign User.id
-  userId    String
+  userId    Int
 
   /// Notification type
   /// @enum NotificationType
@@ -849,12 +861,12 @@ enum NotificationType {
 /// })
 /// ```
 model Session {
-  /// Primary key - UUID v4
-  id        String   @id @default(uuid())
+  /// Primary key — auto-increment integer
+  id        Int      @id @default(autoincrement())
 
   /// Reference to user
   /// @foreign User.id
-  userId    String
+  userId    Int
 
   /// Session token (JWT)
   /// @unique
@@ -885,4 +897,159 @@ model Session {
   @@index([token])
   @@index([expiresAt])
   @@map("sessions")
+}
+
+// ==============================================
+// Auction Tracking
+// ==============================================
+
+/// Yahoo Auction tracking request
+///
+/// @description
+/// Created when a customer submits a Yahoo Auctions Japan URL for price tracking.
+/// The cron job polls every N minutes and appends a new AuctionPriceLog entry
+/// whenever the price changes. Once endTime is reached the status is set to "closed".
+///
+/// @workflow
+/// 1. pending   → Admin reviews and starts tracking
+/// 2. tracking  → Cron job polls price every N minutes
+/// 3. closed    → Auction ended (endTime passed)
+/// 4. cancelled → Cancelled manually
+///
+/// @example
+/// ```typescript
+/// const req = await prisma.auctionRequest.create({
+///   data: {
+///     userId: 1,
+///     url: 'https://auctions.yahoo.co.jp/jp/auction/r1234567',
+///     contactName: 'John / Line: @johndoe',
+///     status: 'pending',
+///   },
+/// })
+/// ```
+model AuctionRequest {
+  /// Primary key — auto-increment integer
+  id          Int       @id @default(autoincrement())
+
+  /// Reference to user who submitted the request (null = guest)
+  /// @foreign User.id
+  userId      Int?
+
+  /// Full Yahoo Auctions Japan URL
+  /// @format url
+  /// @example https://auctions.yahoo.co.jp/jp/auction/r1234567
+  url         String
+
+  /// Yahoo item ID extracted from the URL
+  /// @example r1234567
+  yahooItemId String?
+
+  /// Auction item title
+  /// @maxLength 500
+  title       String?
+
+  /// Item thumbnail image URL
+  /// @format url
+  imageUrl    String?
+
+  /// Auction end time (JST, converted to UTC)
+  endTime     DateTime?
+
+  /// Current price in JPY — scraped initially, updated by cron job
+  /// @currency JPY
+  currentPrice Int?
+
+  /// Tracking status
+  /// @default pending
+  /// @enum pending | tracking | closed | cancelled
+  status      String    @default("pending")
+
+  /// Note from Backoffice
+  note        String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  /// User who submitted this request
+  user        User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// User bid history for this auction request
+  priceLogs   AuctionPriceLog[]
+
+  @@index([status])
+  @@index([userId])
+  @@map("auction_requests")
+}
+
+/// User bid log for an auction request
+///
+/// @description
+/// Records each time a user places a bid on an auction request.
+/// bidCount is the sequential bid number within that auctionRequestId (starts at 1).
+///
+/// @example
+/// ```typescript
+/// await prisma.auctionPriceLog.create({
+///   data: {
+///     auctionRequestId: 1,
+///     price: 15000,
+///     bidCount: 1,
+///   },
+/// })
+/// ```
+model AuctionPriceLog {
+  /// Primary key — auto-increment integer
+  id               Int      @id @default(autoincrement())
+
+  /// Reference to the auction request
+  /// @foreign AuctionRequest.id
+  auctionRequestId Int
+
+  /// Bid price in JPY
+  /// @currency JPY
+  price            Int
+
+  /// Sequential bid number within this auctionRequestId (starts at 1)
+  /// @default 0
+  bidCount         Int      @default(0)
+
+  /// Approval status for this bid
+  /// @default pending
+  /// @enum pending | approved | rejected
+  status           String   @default("pending")
+
+  /// Staff who placed this bid
+  /// @foreign Staff.id
+  biddedBy         Int?
+
+  /// When this bid was recorded
+  recordedAt       DateTime @default(now())
+
+  // Relations
+  /// Auction request this log entry belongs to
+  auctionRequest   AuctionRequest @relation(fields: [auctionRequestId], references: [id], onDelete: Cascade)
+  /// Staff who placed this bid
+  staff            Staff?         @relation(fields: [biddedBy], references: [id], onDelete: SetNull)
+
+  @@index([auctionRequestId])
+  @@index([biddedBy])
+  @@map("auction_price_logs")
+}
+
+/// Staff member
+///
+/// @description
+/// Represents staff members who can place bids on auction requests.
+model Staff {
+  id        Int      @id @default(autoincrement())
+  name      String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  priceLogs AuctionPriceLog[]
+
+  @@map("staffs")
 }

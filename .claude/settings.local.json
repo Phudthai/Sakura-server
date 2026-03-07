@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install node-cron)",
+      "Bash(npm install -D @types/node-cron)",
+      "Bash(npx prisma migrate reset --force)",
+      "Bash(npx prisma migrate dev --name change-user-id-to-int)",
+      "Bash(npx prisma migrate dev --name change-user-id-to-int --create-only)",
+      "Bash(npx prisma db push --accept-data-loss)",
+      "Bash(npx prisma db seed)",
+      "Bash(npx prisma db push --force-reset)"
+    ]
+  }
+}

@@ -9,8 +9,11 @@
 
 import express from 'express'
 import cors from 'cors'
-import { prisma } from "../packages/database/src";
+import { prisma } from '../packages/database/src'
 import authRouter from './routes/auth.routes'
+import auctionRouter from './routes/auction.routes'
+import backofficeRouter from './routes/backoffice.routes'
+import { startAuctionCron } from './jobs/auction-cron.job'
 
 const app = express()
 const PORT = process.env.API_PORT || 4000
@@ -21,6 +24,8 @@ app.use(express.json())
 
 // Routes
 app.use('/api/auth', authRouter)
+app.use('/api/auction-requests', auctionRouter)
+app.use('/api/backoffice', backofficeRouter)
 
 // Health check endpoint
 app.get('/health', (_req, res) => {
@@ -48,4 +53,5 @@ app.get('/api/test-db', async (_req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 API server running on http://localhost:${PORT}`)
   console.log(`📊 Health check: http://localhost:${PORT}/health`)
+  startAuctionCron()
 })

@@ -35,16 +35,19 @@ const prisma = new PrismaClient()
 async function main() {
   console.log('🌱 Starting database seed...')
 
-  // Clear existing data (optional - uncomment if needed)
-  // await prisma.trackingEvent.deleteMany()
-  // await prisma.tracking.deleteMany()
-  // await prisma.payment.deleteMany()
-  // await prisma.orderItem.deleteMany()
-  // await prisma.order.deleteMany()
-  // await prisma.address.deleteMany()
-  // await prisma.notification.deleteMany()
-  // await prisma.session.deleteMany()
-  // await prisma.user.deleteMany()
+  // Clear existing data before re-seeding (order matters — children first)
+  await prisma.trackingEvent.deleteMany()
+  await prisma.tracking.deleteMany()
+  await prisma.payment.deleteMany()
+  await prisma.orderItem.deleteMany()
+  await prisma.order.deleteMany()
+  await prisma.address.deleteMany()
+  await prisma.notification.deleteMany()
+  await prisma.session.deleteMany()
+  await prisma.auctionPriceLog.deleteMany()
+  await prisma.auctionRequest.deleteMany()
+  await prisma.user.deleteMany()
+  console.log('🗑️  Cleared existing seed data')
 
   // ==============================================
   // Create Users
@@ -404,7 +407,7 @@ async function main() {
         type: 'ORDER_UPDATE',
         title: 'Order Delivered',
         message: `Your order #${order1.orderNumber} has been delivered successfully.`,
-        resourceId: order1.id,
+        resourceId: String(order1.id),
         isRead: true,
         readAt: new Date('2026-03-05T16:00:00Z'),
       },
@@ -413,7 +416,7 @@ async function main() {
         type: 'TRACKING_UPDATE',
         title: 'Package Shipped',
         message: `Your order #${order2.orderNumber} has been shipped from Japan.`,
-        resourceId: order2.id,
+        resourceId: String(order2.id),
         isRead: false,
       },
       {
@@ -421,7 +424,7 @@ async function main() {
         type: 'PAYMENT_UPDATE',
         title: 'Payment Pending',
         message: `Please complete payment for order #${order3.orderNumber}.`,
-        resourceId: order3.id,
+        resourceId: String(order3.id),
         isRead: false,
       },
     ],

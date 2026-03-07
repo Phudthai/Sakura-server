@@ -16,3 +16,7 @@ export * from './validators/auth.validator'
 
 // Export constants
 export * from './constants/order-status.const'
+
+// Export auction types & validators
+export * from './types/auction.types'
+export * from './validators/auction.validator'
