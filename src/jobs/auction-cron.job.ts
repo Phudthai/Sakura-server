@@ -9,6 +9,7 @@
 
 import cron from 'node-cron'
 import { prisma } from '../../packages/database/src'
+import { jpyToBaht } from '../../packages/shared/src'
 import { scrapeYahooAuction } from '../services/auction-scraper.service'
 
 export function startAuctionCron(): void {
@@ -43,7 +44,7 @@ export function startAuctionCron(): void {
         if (ar.currentPrice !== newPrice) {
           await prisma.auctionRequest.update({
             where: { id: ar.id },
-            data: { currentPrice: newPrice },
+            data: { currentPrice: newPrice, currentPriceBaht: jpyToBaht(newPrice) },
           })
           console.log(`[AuctionCron] Price updated for #${ar.id}: ${ar.currentPrice ?? '?'} → ${newPrice}`)
         }
@@ -53,7 +54,7 @@ export function startAuctionCron(): void {
           const newPrice = (ar.currentPrice ?? 0) + 1
           await prisma.auctionRequest.update({
             where: { id: ar.id },
-            data: { currentPrice: newPrice },
+            data: { currentPrice: newPrice, currentPriceBaht: jpyToBaht(newPrice) },
           })
           console.log(`[AuctionCron] TEST MODE: scrape failed, simulated update for #${ar.id}: ${ar.currentPrice ?? '?'} → ${newPrice}`)
         } else {

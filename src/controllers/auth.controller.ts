@@ -3,6 +3,7 @@ import { compare, hash } from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { prisma } from '../../packages/database/src'
 import { loginSchema, registerSchema } from '../../packages/shared/src'
+import { importFromExcel } from '../services/excel-import.service'
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'sakura-dev-secret-change-in-production'
 const JWT_EXPIRES_IN = '7d'
@@ -91,6 +92,12 @@ export async function register(req: Request, res: Response) {
     })
 
     const token = signToken({ userId: user.id, email: user.email, role: user.role })
+
+    if (user.externalId) {
+      importFromExcel(user.externalId, user.id).catch((err) => {
+        console.error('[Excel Import]', err)
+      })
+    }
 
     return res.status(201).json({
       success: true,

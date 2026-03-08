@@ -14,6 +14,7 @@ import { prisma } from '../packages/database/src'
 import authRouter from './routes/auth.routes'
 import auctionRouter from './routes/auction.routes'
 import backofficeRouter from './routes/backoffice.routes'
+import paymentRouter from './routes/payment.routes'
 import { startAuctionCron } from './jobs/auction-cron.job'
 
 const app = express()
@@ -23,10 +24,14 @@ const PORT = process.env.PORT || process.env.API_PORT || 4000
 app.use(cors())
 app.use(express.json())
 
+// Static files: uploads (slip images)
+app.use('/uploads', express.static('uploads'))
+
 // Routes
 app.use('/api/auth', authRouter)
 app.use('/api/auction-requests', auctionRouter)
 app.use('/api/backoffice', backofficeRouter)
+app.use('/api/payment-obligations', paymentRouter)
 
 // Health check endpoint
 app.get('/health', (_req, res) => {

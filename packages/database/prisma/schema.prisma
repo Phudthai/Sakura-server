@@ -54,22 +54,31 @@ model AuctionRequest {
   id           Int       @id @default(autoincrement())
   userId       Int?
   url          String
-  yahooItemId  String?
+  web          String?   @default("yahoo")
+  itemId       String?   @map("item_id")
   title        String?
   imageUrl     String?
   endTime      DateTime?
-  status       String    @default("pending")
-  currentPrice Int?
-  note         String?
-  bidResult    String?   @map("bid_result")
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  status           String    @default("pending")
+  currentPrice     Int?
+  currentPriceBaht Int?      @map("current_price_baht")
+  note             String?
+  bidResult         String?   @map("bid_result")
+  weightGram        Int?      @map("weight_gram")
+  intlShippingType  String?   @map("intl_shipping_type")
+  lot               String?
+  boughtAt          DateTime? @map("bought_at")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   user       User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
   priceLogs  AuctionPriceLog[]
+  paymentObligations PaymentObligation[]
+  deliveryStages DeliveryStage[]
 
   @@index([status])
   @@index([userId])
+  @@index([web])
   @@map("auction_requests")
 }
 
@@ -99,4 +108,91 @@ model Staff {
   priceLogs AuctionPriceLog[]
 
   @@map("staffs")
+}
+
+// ==============================================
+// Payment (Normalized)
+// ==============================================
+
+model PaymentObligationType {
+  id     Int      @id @default(autoincrement())
+  code   String   @unique
+  nameTh String   @map("name_th")
+  nameEn String   @map("name_en")
+
+  obligations PaymentObligation[]
+
+  @@map("payment_obligation_types")
+}
+
+model PaymentObligation {
+  id                 Int       @id @default(autoincrement())
+  auctionRequestId   Int       @map("auction_request_id")
+  obligationTypeId   Int       @map("obligation_type_id")
+  amount              Int
+  currency            String    @default("THB")
+  dueDate             DateTime? @map("due_date")
+  status              String    @default("PENDING")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  auctionRequest AuctionRequest    @relation(fields: [auctionRequestId], references: [id], onDelete: Cascade)
+  obligationType PaymentObligationType @relation(fields: [obligationTypeId], references: [id], onDelete: Restrict)
+  transactions   PaymentTransaction[]
+
+  @@index([auctionRequestId])
+  @@index([status])
+  @@map("payment_obligations")
+}
+
+model PaymentTransaction {
+  id                   Int      @id @default(autoincrement())
+  paymentObligationId   Int     @map("payment_obligation_id")
+  amount                Int
+  paidAt                DateTime @map("paid_at")
+  note                 String?
+  slipReference         String?   @map("slip_reference")
+  slipImageUrl          String?   @map("slip_image_url")
+
+  paymentObligation PaymentObligation @relation(fields: [paymentObligationId], references: [id], onDelete: Cascade)
+
+  @@index([paymentObligationId])
+  @@map("payment_transactions")
+}
+
+// ==============================================
+// Delivery Tracking (3 stages)
+// ==============================================
+
+model DeliveryStageType {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  nameTh    String   @map("name_th")
+  nameEn    String   @map("name_en")
+  sortOrder Int      @default(0) @map("sort_order")
+
+  stages DeliveryStage[]
+
+  @@map("delivery_stage_types")
+}
+
+model DeliveryStage {
+  id                 Int       @id @default(autoincrement())
+  auctionRequestId   Int       @map("auction_request_id")
+  stageTypeId        Int       @map("stage_type_id")
+  status             String    @default("PENDING")
+  trackingNumber     String?   @map("tracking_number")
+  carrier            String?
+  shippedAt          DateTime? @map("shipped_at")
+  deliveredAt        DateTime? @map("delivered_at")
+  note               String?
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  auctionRequest AuctionRequest   @relation(fields: [auctionRequestId], references: [id], onDelete: Cascade)
+  stageType      DeliveryStageType @relation(fields: [stageTypeId], references: [id], onDelete: Restrict)
+
+  @@index([auctionRequestId])
+  @@index([status])
+  @@map("delivery_stages")
 }

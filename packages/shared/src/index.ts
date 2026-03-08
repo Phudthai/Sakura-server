@@ -20,3 +20,6 @@ export * from './constants/order-status.const'
 // Export auction types & validators
 export * from './types/auction.types'
 export * from './validators/auction.validator'
+
+// Export utils
+export * from './utils/currency.util'
