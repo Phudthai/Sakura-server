@@ -1,19 +1,12 @@
 /**
  * @file payment.controller.ts
- * @description Payment obligation slip upload
- * @module @sakura/api/controllers
+ * @description Backoffice payment slip upload
  */
 
 import { Request, Response } from 'express'
 import * as fs from 'fs'
-import { prisma } from '../../packages/database/src'
+import { prisma } from '../../../packages/database/src'
 
-/**
- * POST /api/payment-obligations/:id/slip
- * Upload slip image for a payment obligation.
- * Creates a PaymentTransaction with the slip (or updates existing one).
- * Requires ADMIN or STAFF.
- */
 export async function uploadSlip(req: Request, res: Response) {
   const id = parseInt(req.params.id)
   if (isNaN(id)) {

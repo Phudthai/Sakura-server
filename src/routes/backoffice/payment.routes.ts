@@ -1,15 +1,14 @@
 /**
  * @file payment.routes.ts
- * @description Payment obligation routes (slip upload)
- * @module @sakura/api/routes
+ * @description Backoffice payment slip upload routes
  */
 
 import { Router } from 'express'
 import multer from 'multer'
 import * as path from 'path'
 import * as fs from 'fs'
-import { requireAuth } from '../middleware/auth.middleware'
-import * as paymentController from '../controllers/payment.controller'
+import { requireAuth } from '../../middleware/auth.middleware'
+import * as paymentController from '../../controllers/backoffice/payment.controller'
 
 const router = Router()
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads', 'slips')

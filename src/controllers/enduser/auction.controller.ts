@@ -1,8 +1,17 @@
+/**
+ * @file auction.controller.ts
+ * @description Enduser auction request operations
+ */
+
 import { Request, Response } from 'express'
-import { prisma } from '../../packages/database/src'
-import { jpyToBaht } from '../../packages/shared/src'
-import { createAuctionRequestSchema, updateAuctionStatusSchema, updateAuctionNoteSchema, submitBidSchema, mockAuctionSchema } from '../../packages/shared/src'
-import { scrapeYahooAuction } from '../services/auction-scraper.service'
+import { prisma } from '../../../packages/database/src'
+import { jpyToBaht } from '../../../packages/shared/src'
+import {
+  createAuctionRequestSchema,
+  submitBidSchema,
+  mockAuctionSchema,
+} from '../../../packages/shared/src'
+import { scrapeYahooAuction } from '../../services/auction-scraper.service'
 
 export async function createAuction(req: Request, res: Response) {
   const result = createAuctionRequestSchema.safeParse(req.body)
@@ -201,7 +210,10 @@ export async function submitBid(req: Request, res: Response) {
   }
 
   if (auctionRequest.status === 'completed' || auctionRequest.status === 'cancelled') {
-    return res.status(409).json({ success: false, error: { code: 'AUCTION_ENDED', message: `Cannot bid on a ${auctionRequest.status} auction` } })
+    return res.status(409).json({
+      success: false,
+      error: { code: 'AUCTION_ENDED', message: `Cannot bid on a ${auctionRequest.status} auction` },
+    })
   }
 
   const bidCount = await prisma.auctionPriceLog.count({ where: { auctionRequestId: id } })
@@ -280,110 +292,4 @@ export async function mockAuction(req: Request, res: Response) {
       message: 'Mock end-time: auction ends in 60 seconds',
     })
   }
-}
-
-export async function updateNote(req: Request, res: Response) {
-  const id = parseInt(req.params.id)
-  if (isNaN(id)) {
-    return res.status(400).json({ success: false, error: { code: 'INVALID_ID', message: 'Invalid id' } })
-  }
-
-  const result = updateAuctionNoteSchema.safeParse(req.body)
-  if (!result.success) {
-    const errors = result.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message }))
-    return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid input', details: { errors } } })
-  }
-
-  const existing = await prisma.auctionRequest.findUnique({ where: { id } })
-  if (!existing) {
-    return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Auction request not found' } })
-  }
-
-  const updated = await prisma.auctionRequest.update({
-    where: { id },
-    data: { note: result.data.note },
-    include: {
-      deliveryStages: { include: { stageType: true }, orderBy: { stageType: { sortOrder: 'asc' } } },
-    },
-  })
-
-  const stages = updated.deliveryStages.map((s) => ({
-    id: s.id,
-    stageTypeCode: s.stageType.code,
-    stageTypeNameTh: s.stageType.nameTh,
-    status: s.status,
-    trackingNumber: s.trackingNumber ?? null,
-    carrier: s.carrier ?? null,
-    shippedAt: s.shippedAt?.toISOString() ?? null,
-    deliveredAt: s.deliveredAt?.toISOString() ?? null,
-  }))
-  const isDeliveried = stages.length > 0 && stages.every((s) => s.status === 'DELIVERED')
-  const { deliveryStages: _ds, ...rest } = updated
-
-  return res.json({
-    success: true,
-    data: {
-      ...rest,
-      deliveryStages: stages,
-      isDeliveried,
-      shippingPrice: null,
-      endTime: updated.endTime?.toISOString() ?? null,
-      createdAt: updated.createdAt.toISOString(),
-      updatedAt: updated.updatedAt.toISOString(),
-    },
-    message: 'Note updated',
-  })
-}
-
-export async function updateStatus(req: Request, res: Response) {
-  const id = parseInt(req.params.id)
-  if (isNaN(id)) {
-    return res.status(400).json({ success: false, error: { code: 'INVALID_ID', message: 'Invalid id' } })
-  }
-
-  const result = updateAuctionStatusSchema.safeParse(req.body)
-  if (!result.success) {
-    const errors = result.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message }))
-    return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid input', details: { errors } } })
-  }
-
-  const existing = await prisma.auctionRequest.findUnique({ where: { id } })
-  if (!existing) {
-    return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Auction request not found' } })
-  }
-
-  const updated = await prisma.auctionRequest.update({
-    where: { id },
-    data: { status: result.data.status },
-    include: {
-      deliveryStages: { include: { stageType: true }, orderBy: { stageType: { sortOrder: 'asc' } } },
-    },
-  })
-
-  const stages = updated.deliveryStages.map((s) => ({
-    id: s.id,
-    stageTypeCode: s.stageType.code,
-    stageTypeNameTh: s.stageType.nameTh,
-    status: s.status,
-    trackingNumber: s.trackingNumber ?? null,
-    carrier: s.carrier ?? null,
-    shippedAt: s.shippedAt?.toISOString() ?? null,
-    deliveredAt: s.deliveredAt?.toISOString() ?? null,
-  }))
-  const isDeliveried = stages.length > 0 && stages.every((s) => s.status === 'DELIVERED')
-  const { deliveryStages: _ds, ...rest } = updated
-
-  return res.json({
-    success: true,
-    data: {
-      ...rest,
-      deliveryStages: stages,
-      isDeliveried,
-      shippingPrice: null,
-      endTime: updated.endTime?.toISOString() ?? null,
-      createdAt: updated.createdAt.toISOString(),
-      updatedAt: updated.updatedAt.toISOString(),
-    },
-    message: `Status updated to ${result.data.status}`,
-  })
 }

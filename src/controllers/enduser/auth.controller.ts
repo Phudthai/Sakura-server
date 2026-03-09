@@ -1,9 +1,14 @@
+/**
+ * @file auth.controller.ts
+ * @description Enduser authentication
+ */
+
 import { Request, Response } from 'express'
 import { compare, hash } from 'bcryptjs'
 import jwt from 'jsonwebtoken'
-import { prisma } from '../../packages/database/src'
-import { loginSchema, registerSchema } from '../../packages/shared/src'
-import { importFromExcel } from '../services/excel-import.service'
+import { prisma } from '../../../packages/database/src'
+import { loginSchema, registerSchema } from '../../../packages/shared/src'
+import { importFromExcel } from '../../services/excel-import.service'
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'sakura-dev-secret-change-in-production'
 const JWT_EXPIRES_IN = '7d'

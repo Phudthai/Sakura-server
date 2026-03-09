@@ -1,6 +1,11 @@
+/**
+ * @file auth.routes.ts
+ * @description Enduser auth routes
+ */
+
 import { Router } from 'express'
-import { requireAuth } from '../middleware/auth.middleware'
-import * as authController from '../controllers/auth.controller'
+import { requireAuth } from '../../middleware/auth.middleware'
+import * as authController from '../../controllers/enduser/auth.controller'
 
 const router = Router()
 
