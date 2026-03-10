@@ -26,5 +26,8 @@
 // Export Prisma Client instance
 export { prisma } from './client'
 
+// Export user helpers
+export { generateUserCode } from './user'
+
 // Re-export all Prisma generated types for type safety
 export * from '@prisma/client'

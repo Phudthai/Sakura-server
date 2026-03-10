@@ -42,11 +42,14 @@ export const registerSchema = z.object({
 
   phone: z.string().optional(),
 
-  /** Maps to user_code in DB */
+  /** Maps to username in DB (optional display name; user_code is auto-generated) */
   username: z.string().max(100).optional(),
 
   /** Maps to external_id in DB */
   userId: z.string().max(255).optional(),
+
+  /** For completing registration of placeholder user (from backoffice register_url) */
+  user_code: z.string().max(100).optional(),
 })
 
 /**

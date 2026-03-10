@@ -4,7 +4,8 @@
  */
 
 import { Request, Response } from 'express'
-import { prisma } from '../../../packages/database/src'
+import type { PrismaClient } from '@prisma/client'
+import { prisma, generateUserCode } from '../../../packages/database/src'
 import {
   createAuctionBackofficeSchema,
   updateAuctionStatusSchema,
@@ -22,7 +23,9 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
 
   const where = {
     ...(status ? { status } : {}),
-    ...(user_code ? { user: { userCode: user_code } } : {}),
+    ...(user_code
+      ? { user: { OR: [{ userCode: user_code }, { username: user_code }] } }
+      : {}),
   }
 
   const [data, total] = await Promise.all([
@@ -33,11 +36,7 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
       take: limit,
       include: {
         priceLogs: { orderBy: { recordedAt: 'desc' }, take: 1 },
-        deliveryStages: {
-          include: { stageType: true },
-          orderBy: { stageType: { sortOrder: 'asc' } },
-        },
-        user: { select: { userCode: true, externalId: true } },
+        user: { select: { userCode: true, username: true, externalId: true } },
       },
     }),
     prisma.auctionRequest.count({ where }),
@@ -47,30 +46,30 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
     success: true,
     data: data.map((r) => {
       const lastBid = r.priceLogs[0]
-      const { priceLogs, deliveryStages, user, ...rest } = r
-      const stages = deliveryStages.map((s) => ({
-        id: s.id,
-        stageTypeCode: s.stageType.code,
-        stageTypeNameTh: s.stageType.nameTh,
-        status: s.status,
-        trackingNumber: s.trackingNumber ?? null,
-        carrier: s.carrier ?? null,
-        shippedAt: s.shippedAt?.toISOString() ?? null,
-        deliveredAt: s.deliveredAt?.toISOString() ?? null,
-      }))
-      const isDeliveried = stages.length > 0 && stages.every((s) => s.status === 'DELIVERED')
+      const {
+        priceLogs,
+        user,
+        web: _w,
+        itemId: _i,
+        bidResult: _b,
+        weightGram: _wg,
+        intlShippingType: _ist,
+        lot: _l,
+        boughtAt: _ba,
+        createdAt: _c,
+        updatedAt: _u,
+        ...rest
+      } = r
       return {
         ...rest,
         userCode: user?.userCode ?? null,
+        username: user?.username ?? null,
         externalId: user?.externalId ?? null,
-        bidResult: r.bidResult ?? null,
+        register_url: user?.userCode
+          ? `${process.env.FRONTEND_URL ?? ''}/register?user_code=${user.userCode}`
+          : null,
         lastBid: lastBid ? { price: lastBid.price, status: lastBid.status } : null,
-        deliveryStages: stages,
-        isDeliveried,
-        shippingPrice: null,
         endTime: r.endTime?.toISOString() ?? null,
-        createdAt: r.createdAt.toISOString(),
-        updatedAt: r.updatedAt.toISOString(),
       }
     }),
     meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
@@ -84,16 +83,7 @@ export async function createAuctionBackoffice(req: Request, res: Response) {
     return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid input', details: { errors } } })
   }
 
-  const { url, firstBidPrice, user_code } = result.data
-
-  let userId: number | null = null
-  if (user_code) {
-    const user = await prisma.user.findUnique({ where: { userCode: user_code } })
-    if (!user) {
-      return res.status(404).json({ success: false, error: { code: 'USER_NOT_FOUND', message: `User with user_code "${user_code}" not found` } })
-    }
-    userId = user.id
-  }
+  const { url, firstBidPrice } = result.data
 
   let scraped
   try {
@@ -103,44 +93,65 @@ export async function createAuctionBackoffice(req: Request, res: Response) {
     return res.status(422).json({ success: false, error: { code: 'SCRAPE_ERROR', message } })
   }
 
-  const auctionRequest = await prisma.auctionRequest.create({
-    data: {
-      userId,
-      url,
-      web: 'yahoo',
-      itemId: scraped.itemId,
-      title: scraped.title,
-      imageUrl: scraped.imageUrl,
-      currentPrice: scraped.currentPrice,
-      currentPriceBaht: jpyToBaht(scraped.currentPrice),
-      endTime: scraped.endTime ? new Date(scraped.endTime) : null,
-      status: 'pending',
-    },
-  })
-
-  const stageTypes = await prisma.deliveryStageType.findMany({ orderBy: { sortOrder: 'asc' } })
-  await prisma.deliveryStage.createMany({
-    data: stageTypes.map((st) => ({
-      auctionRequestId: auctionRequest.id,
-      stageTypeId: st.id,
-      status: 'PENDING',
-    })),
-  })
-
-  if (firstBidPrice != null) {
-    await prisma.auctionPriceLog.create({
+  const { auctionRequest, userCode } = await prisma.$transaction(async (tx) => {
+    const userCode = await generateUserCode(tx as Pick<PrismaClient, 'user'>)
+    const user = await tx.user.create({
       data: {
-        auctionRequestId: auctionRequest.id,
-        price: firstBidPrice,
-        bidCount: 1,
+        userCode,
+        externalId: null,
+        username: null,
+        email: null,
+        password: null,
+        name: null,
+        phone: null,
+        role: 'CUSTOMER',
+        isEmailVerified: false,
+        isActive: true,
       },
     })
-  }
+
+    const auctionRequest = await tx.auctionRequest.create({
+      data: {
+        userId: user.id,
+        url,
+        web: 'yahoo',
+        itemId: scraped.itemId,
+        title: scraped.title,
+        imageUrl: scraped.imageUrl,
+        currentPrice: scraped.currentPrice,
+        currentPriceBaht: jpyToBaht(scraped.currentPrice),
+        endTime: scraped.endTime ? new Date(scraped.endTime) : null,
+        status: 'pending',
+      },
+    })
+
+    const stageTypes = await tx.deliveryStageType.findMany({ orderBy: { sortOrder: 'asc' } })
+    await tx.deliveryStage.createMany({
+      data: stageTypes.map((st) => ({
+        auctionRequestId: auctionRequest.id,
+        stageTypeId: st.id,
+        status: 'PENDING',
+      })),
+    })
+
+    if (firstBidPrice != null) {
+      await tx.auctionPriceLog.create({
+        data: {
+          auctionRequestId: auctionRequest.id,
+          price: firstBidPrice,
+          bidCount: 1,
+        },
+      })
+    }
+
+    return { auctionRequest, userCode }
+  })
 
   return res.status(201).json({
     success: true,
     data: {
       id: auctionRequest.id,
+      userCode,
       title: scraped.title,
       currentPrice: auctionRequest.currentPrice,
       endTime: scraped.endTime,

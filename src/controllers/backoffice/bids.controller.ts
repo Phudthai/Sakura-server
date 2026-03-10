@@ -23,7 +23,7 @@ export async function getPendingBids(_req: Request, res: Response) {
           currentPrice: true,
           endTime: true,
           note: true,
-          user: { select: { userCode: true, externalId: true } },
+          user: { select: { userCode: true, username: true, externalId: true } },
         },
       },
       staff: { select: { id: true, name: true } },
@@ -52,6 +52,7 @@ export async function getPendingBids(_req: Request, res: Response) {
             endTime: l.auctionRequest.endTime?.toISOString() ?? null,
             note: l.auctionRequest.note,
             userCode: l.auctionRequest.user?.userCode ?? null,
+            username: l.auctionRequest.user?.username ?? null,
             externalId: l.auctionRequest.user?.externalId ?? null,
           }
         : null,

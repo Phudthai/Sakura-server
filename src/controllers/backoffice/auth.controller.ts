@@ -42,12 +42,15 @@ export async function loginBackoffice(req: Request, res: Response) {
       })
     }
 
+    if (!user.password) {
+      return res.status(401).json({ success: false, error: { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' } })
+    }
     const isValid = await compare(password, user.password)
     if (!isValid) {
       return res.status(401).json({ success: false, error: { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' } })
     }
 
-    const token = signToken({ userId: user.id, email: user.email, role: user.role })
+    const token = signToken({ userId: user.id, email: user.email ?? '', role: user.role })
 
     return res.status(200).json({
       success: true,
@@ -55,8 +58,8 @@ export async function loginBackoffice(req: Request, res: Response) {
         token,
         user: {
           id: user.id,
-          email: user.email,
-          name: user.name,
+          email: user.email ?? null,
+          name: user.name ?? null,
           phone: user.phone,
           role: user.role,
           isEmailVerified: user.isEmailVerified,
@@ -75,7 +78,7 @@ export async function meBackoffice(req: Request, res: Response) {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user!.userId },
-      select: { id: true, email: true, name: true, phone: true, role: true, isEmailVerified: true, createdAt: true },
+      select: { id: true, email: true, name: true, phone: true, userCode: true, username: true, role: true, isEmailVerified: true, createdAt: true },
     })
     if (!user) {
       return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } })

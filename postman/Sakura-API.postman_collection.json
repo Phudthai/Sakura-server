@@ -45,10 +45,10 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"customer@example.com\",\n  \"password\": \"SecurePass123!\",\n  \"name\": \"สมชาย ใจดี\",\n  \"phone\": \"08-1234-5678\"\n}"
+              "raw": "{\n  \"email\": \"customer@example.com\",\n  \"password\": \"SecurePass123!\",\n  \"name\": \"สมชาย ใจดี\",\n  \"phone\": \"08-1234-5678\",\n  \"user_code\": \"m000006\"\n}"
             },
             "url": "{{baseUrl}}/api/enduser/auth/register",
-            "description": "สมัครสมาชิก — password ต้องมีตัวพิมพ์ใหญ่ เล็ก ตัวเลข และอักขระพิเศษ อย่างน้อย 8 ตัว. Optional: username (user_code), userId (external_id), phone"
+            "description": "สมัครสมาชิก — password ต้องมีตัวพิมพ์ใหญ่ เล็ก ตัวเลข และอักขระพิเศษ อย่างน้อย 8 ตัว. Optional: username, userId (external_id), phone, user_code (จาก register_url — อัปเดต placeholder user แทนสร้างใหม่)"
           }
         },
         {
@@ -238,7 +238,7 @@
                 { "key": "page", "value": "1" },
                 { "key": "limit", "value": "20" },
                 { "key": "status", "value": "", "description": "pending/tracking/closed/cancelled (optional)" },
-                { "key": "user_code", "value": "", "description": "กรองตาม user_code (optional)" }
+                { "key": "user_code", "value": "", "description": "กรองตาม userCode หรือ username (m000001 หรือ CUST001) (optional)" }
               ]
             },
             "description": "รายการคำขอประมูล — เฉพาะ Admin/Staff. Query: page, limit, status, user_code (optional)"
@@ -254,10 +254,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"url\": \"https://page.auctions.yahoo.co.jp/jp/auction/x1234567890\",\n  \"firstBidPrice\": 50000,\n  \"user_code\": \"CUST001\"\n}"
+              "raw": "{\n  \"url\": \"https://page.auctions.yahoo.co.jp/jp/auction/x1234567890\",\n  \"firstBidPrice\": 50000\n}"
             },
             "url": "{{baseUrl}}/api/backoffice/auction-requests",
-            "description": "สร้างคำขอประมูล — เฉพาะ Admin/Staff. user_code (optional) = ผูกกับ user ตาม user_code, omit ได้ถ้าไม่ต้องการผูก"
+            "description": "สร้างคำขอประมูล — เฉพาะ Admin/Staff. สร้าง user ใหม่อัตโนมัติ (user_code จาก DB) สำหรับลูกค้าแรก. Optional: firstBidPrice"
           }
         },
         {
@@ -360,6 +360,17 @@
             },
             "url": "{{baseUrl}}/api/backoffice/staffs",
             "description": "สร้าง staff ใหม่ — เฉพาะ Admin"
+          }
+        },
+        {
+          "name": "List Customers",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{baseUrl}}/api/backoffice/customers",
+            "description": "รายชื่อลูกค้า (users ที่มี role CUSTOMER) ทั้งหมด — เฉพาะ Admin/Staff"
           }
         },
         {

@@ -20,10 +20,8 @@ export const createAuctionRequestSchema = z.object({
   firstBidPrice: z.number().int().positive().optional(),
 });
 
-/** Backoffice: same as create + optional user_code to assign to user */
-export const createAuctionBackofficeSchema = createAuctionRequestSchema.extend({
-  user_code: z.string().max(100).optional(),
-});
+/** Backoffice: same as create — creates new user (user_code auto-generated) for first-time customers */
+export const createAuctionBackofficeSchema = createAuctionRequestSchema;
 
 export const updateAuctionStatusSchema = z.object({
   status: z.enum(["tracking", "closed", "cancelled"]),

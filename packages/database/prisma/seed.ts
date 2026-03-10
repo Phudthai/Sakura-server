@@ -38,7 +38,8 @@ async function main() {
       role: UserRole.ADMIN,
       isEmailVerified: true,
       isActive: true,
-      userCode: 'ADMIN001',
+      userCode: 'm000001',
+      username: 'ADMIN001',
       externalId: 'admin-001',
     },
   })
@@ -53,6 +54,7 @@ async function main() {
       role: UserRole.STAFF,
       isEmailVerified: true,
       isActive: true,
+      userCode: 'm000002',
     },
   })
   console.log(`✅ Staff user: ${staffUser.email}`)
@@ -66,6 +68,7 @@ async function main() {
       role: UserRole.CUSTOMER,
       isEmailVerified: true,
       isActive: true,
+      userCode: 'm000003',
     },
   })
   console.log('✅ Customer: customer@sakura.com')

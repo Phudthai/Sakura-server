@@ -23,6 +23,18 @@ const PORT = process.env.PORT || process.env.API_PORT || 4000;
 app.use(cors());
 app.use(express.json());
 
+// Response time logging (dev: all requests, prod: slow only >500ms)
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const ms = Date.now() - start;
+    if (ms > 500) console.warn(`[SLOW] ${req.method} ${req.path} ${ms}ms`);
+    else if (process.env.NODE_ENV === "development")
+      console.log(`${req.method} ${req.path} ${ms}ms`);
+  });
+  next();
+});
+
 // Static files: uploads (slip images)
 app.use("/uploads", express.static("uploads"));
 
@@ -52,9 +64,19 @@ app.get(`${API_BASE_PATH}/test-db`, async (_req, res) => {
   }
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 API server running on http://localhost:${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/health`);
-  startAuctionCron();
+// Start server (warm DB connection pool before accepting requests)
+async function start() {
+  await prisma.$connect();
+  console.log("Database connected");
+
+  app.listen(PORT, () => {
+    console.log(`🚀 API server running on http://localhost:${PORT}`);
+    console.log(`📊 Health check: http://localhost:${PORT}/health`);
+    startAuctionCron();
+  });
+}
+
+start().catch((err) => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
 });

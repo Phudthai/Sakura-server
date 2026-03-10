@@ -20,11 +20,12 @@ datasource db {
 
 model User {
   id             Int       @id @default(autoincrement())
-  userCode       String?   @unique @map("user_code")
+  userCode       String    @unique @map("user_code")
+  username       String?   @unique
   externalId     String?   @unique @map("external_id")
-  email          String    @unique
-  password       String
-  name           String
+  email          String?   @unique
+  password       String?
+  name           String?
   phone          String?
   role           UserRole  @default(CUSTOMER)
   isEmailVerified Boolean  @default(false)
@@ -35,6 +36,7 @@ model User {
   auctionRequests AuctionRequest[]
 
   @@index([email])
+  @@index([userCode])
   @@index([createdAt])
   @@index([role])
   @@map("users")
@@ -79,6 +81,9 @@ model AuctionRequest {
   @@index([status])
   @@index([userId])
   @@index([web])
+  @@index([createdAt])
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
   @@map("auction_requests")
 }
 
@@ -96,6 +101,8 @@ model AuctionPriceLog {
 
   @@index([auctionRequestId])
   @@index([biddedBy])
+  @@index([status])
+  @@index([status, recordedAt])
   @@map("auction_price_logs")
 }
 
