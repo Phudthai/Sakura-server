@@ -15,6 +15,7 @@ import { API_BASE_PATH } from "./config";
 import * as enduser from "./routes/enduser";
 import * as backoffice from "./routes/backoffice";
 import { startAuctionCron } from "./jobs/auction-cron.job";
+import { startLotCron } from "./jobs/lot-cron.job";
 
 const app = express();
 const PORT = process.env.PORT || process.env.API_PORT || 4000;
@@ -73,6 +74,7 @@ async function start() {
     console.log(`🚀 API server running on http://localhost:${PORT}`);
     console.log(`📊 Health check: http://localhost:${PORT}/health`);
     startAuctionCron();
+    startLotCron();
   });
 }
 

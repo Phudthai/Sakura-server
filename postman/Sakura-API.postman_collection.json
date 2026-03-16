@@ -104,7 +104,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"url\": \"https://page.auctions.yahoo.co.jp/jp/auction/x1234567890\",\n  \"firstBidPrice\": 50000\n}"
+              "raw": "{\n  \"url\": \"https://page.auctions.yahoo.co.jp/jp/auction/x1234567890\",\n  \"firstBidPrice\": 50000,\n  \"intl_shipping_type\": \"air\"\n}"
             },
             "url": "{{baseUrl}}/api/enduser/auction-requests",
             "description": "ส่ง URL ประมูล Yahoo → ดึงข้อมูล + บันทึก DB. Auth ไม่บังคับ (ถ้ามี token จะผูก user_id)"
@@ -254,10 +254,26 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"url\": \"https://page.auctions.yahoo.co.jp/jp/auction/x1234567890\",\n  \"firstBidPrice\": 50000\n}"
+              "raw": "{\n  \"url\": \"https://page.auctions.yahoo.co.jp/jp/auction/x1234567890\",\n  \"firstBidPrice\": 50000,\n  \"intl_shipping_type\": \"air\"\n}"
             },
             "url": "{{baseUrl}}/api/backoffice/auction-requests",
             "description": "สร้างคำขอประมูล — เฉพาะ Admin/Staff. สร้าง user ใหม่อัตโนมัติ (user_code จาก DB) สำหรับลูกค้าแรก. Optional: firstBidPrice"
+          }
+        },
+        {
+          "name": "Submit Bid (Backoffice)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"price\": 50000,\n  \"biddedBy\": 1\n}"
+            },
+            "url": "{{baseUrl}}/api/backoffice/auction-requests/1/bids",
+            "description": "Staff ส่ง bid โดยตรง — บันทึกเป็น approved ทันที (ไม่ต้องรออนุมัติ). แทน :id ด้วย auction request id, biddedBy = staff id"
           }
         },
         {
@@ -291,6 +307,78 @@
             "url": "{{baseUrl}}/api/backoffice/auction-requests/1",
             "description": "อัปเดต status — Admin/Staff. status: tracking | closed | cancelled"
           }
+        },
+        {
+          "name": "Assign Lot to Auction (Backoffice)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lot_id\": 1\n}"
+            },
+            "url": "{{baseUrl}}/api/backoffice/auction-requests/1/lot",
+            "description": "กำหนด lot ให้ auction request — ส่ง lot_id (number) หรือ null เพื่อลบ. แทน :id ด้วย auction request id จริง"
+          }
+        },
+        {
+          "name": "Lots",
+          "item": [
+            {
+              "name": "List Lots",
+              "request": {
+                "method": "GET",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{token}}" }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/backoffice/lots?page=1&limit=20",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "backoffice", "lots"],
+                  "query": [
+                    { "key": "page", "value": "1" },
+                    { "key": "limit", "value": "20" }
+                  ]
+                },
+                "description": "รายการ lots — เฉพาะ Admin/Staff"
+              }
+            },
+            {
+              "name": "Create Lot",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{token}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"lot_code\": \"LOT184\",\n  \"intl_shipping_type\": \"air\",\n  \"start_lot_at\": \"2026-03-01T00:00:00.000Z\",\n  \"end_lot_at\": \"2026-03-15T23:59:59.000Z\",\n  \"arrive_at\": \"2026-03-25T00:00:00.000Z\"\n}"
+                },
+                "url": "{{baseUrl}}/api/backoffice/lots",
+                "description": "สร้าง lot ใหม่ — lot_code, intl_shipping_type (air/sea) required, start_lot_at/end_lot_at/arrive_at optional"
+              }
+            },
+            {
+              "name": "Update Lot",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{token}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"lot_code\": \"LOT-2026-01\",\n  \"start_lot_at\": \"2026-03-01T00:00:00.000Z\",\n  \"end_lot_at\": \"2026-03-15T23:59:59.000Z\",\n  \"arrive_at\": \"2026-03-25T00:00:00.000Z\"\n}"
+                },
+                "url": "{{baseUrl}}/api/backoffice/lots/1",
+                "description": "อัปเดต lot — แทน :id ด้วย lot id จริง. ทุก field เป็น optional"
+              }
+            }
+          ]
         },
         {
           "name": "List Pending Bids",

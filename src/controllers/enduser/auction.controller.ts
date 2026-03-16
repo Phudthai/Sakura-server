@@ -20,7 +20,7 @@ export async function createAuction(req: Request, res: Response) {
     return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid input', details: { errors } } })
   }
 
-  const { url, firstBidPrice } = result.data
+  const { url, firstBidPrice, intl_shipping_type } = result.data
 
   let scraped
   try {
@@ -42,6 +42,7 @@ export async function createAuction(req: Request, res: Response) {
       currentPriceBaht: jpyToBaht(scraped.currentPrice),
       endTime: scraped.endTime ? new Date(scraped.endTime) : null,
       status: 'pending',
+      intlShippingType: intl_shipping_type,
     },
   })
 

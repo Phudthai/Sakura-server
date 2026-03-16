@@ -53,8 +53,9 @@ openssl rand -base64 48
 ### 3.1 รัน Migration ก่อน (ครั้งแรก)
 
 ```bash
-# ตั้ง DATABASE_URL ใน .env ก่อน
-npx prisma migrate deploy
+# ตั้ง DATABASE_URL ใน .env ก่อน (ที่ root ของโปรเจกต์)
+# สำคัญ: รันจาก root ของโปรเจกต์ (Sakura-server/) — Prisma โหลด .env จาก cwd
+npm run db:migrate
 ```
 
 หรือถ้าใช้ `db push` (ไม่แนะนำ production):
@@ -99,8 +100,8 @@ npm start
 1. New → Web Service
 2. Connect repo
 3. Environment: `Node`
-4. Build: `npm install && npx prisma generate`
-5. Start: `npx prisma migrate deploy && npm start`
+4. Build: `npm install && npm run db:generate`
+5. Start: `npm run db:migrate && npm start`
 6. ตั้ง `DATABASE_URL`, `JWT_SECRET` ใน Environment
 
 ### VPS (Ubuntu) + PM2
@@ -109,13 +110,14 @@ npm start
 # บน server
 git clone <repo>
 cd Sakura-server
-npm install --omit=dev
-npx prisma generate
-npx prisma migrate deploy
 
-# ตั้ง .env
+# ตั้ง .env ก่อน (ต้องมี DATABASE_URL ก่อนรัน migrate)
 cp .env.example .env
 nano .env  # แก้ DATABASE_URL, JWT_SECRET
+
+npm install --omit=dev
+npm run db:generate
+npm run db:migrate   # รันจาก root — โหลด .env อัตโนมัติ
 
 # รันด้วย PM2
 npm install -g pm2
@@ -154,6 +156,6 @@ app.use(cors({
 - [ ] สร้าง `JWT_SECRET` ใหม่ (ห้ามใช้ dev)
 - [ ] ตั้ง `NODE_ENV=production`
 - [ ] ตั้ง `AUCTION_CRON_TEST_MODE=false`
-- [ ] รัน `prisma migrate deploy`
+- [ ] รัน `npm run db:migrate` (จาก root)
 - [ ] (Optional) รัน `npm run db:seed` สำหรับ admin
 - [ ] ทดสอบ `/health` และ `/api/test-db`

@@ -153,8 +153,11 @@ Scraping logic อยู่ที่:
 # Cron interval (optional, default 3 min)
 AUCTION_POLL_INTERVAL_MINUTES=3
 
-# ถ้าใช้ proxy เพื่อหลีกเลี่ยง Yahoo block
-HTTP_PROXY=http://...
+# Proxy สำหรับ Yahoo scraping (optional) — รองรับแล้ว
+# ใช้เมื่อ Yahoo block หรือจำกัดสินค้า 18+ ตามภูมิภาค
+# HTTP_PROXY=http://proxy.example.com:8080
+# HTTPS_PROXY=http://proxy.example.com:8080
+# ถ้า proxy ต้อง auth: http://user:pass@proxy.example.com:8080
 ```
 
 ---

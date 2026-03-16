@@ -197,6 +197,17 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
           const itemId = extractItemIdFromUrl(urlClean)
           const imageUrl = itemId ? buildMercariImageUrl(itemId) : null
 
+          let lotId: number | null = null
+          if (parsed.lotRaw && intlShippingType) {
+            const lot = await prisma.lot.findFirst({
+              where: {
+                lotCode: String(parsed.lotRaw).trim(),
+                intlShippingType,
+              },
+            })
+            if (lot) lotId = lot.id
+          }
+
           const auctionRequest = await prisma.auctionRequest.create({
             data: {
               userId: dbUserId,
@@ -210,7 +221,7 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
               currentPriceBaht: jpyToBaht(parsed.currentPrice),
               weightGram: parsed.weightGram,
               boughtAt: parsed.buyDate,
-              lot: parsed.lotRaw,
+              lotId,
               bidResult: 'won',
               status: 'completed',
             },

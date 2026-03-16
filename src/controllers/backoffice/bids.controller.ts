@@ -5,7 +5,65 @@
 
 import { Request, Response } from 'express'
 import { prisma } from '../../../packages/database/src'
-import { approveBidSchema, rejectBidSchema } from '../../../packages/shared/src'
+import { approveBidSchema, rejectBidSchema, submitBidBackofficeSchema } from '../../../packages/shared/src'
+
+export async function submitBidBackoffice(req: Request, res: Response) {
+  const id = parseInt(req.params.id)
+  if (isNaN(id)) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_ID', message: 'Invalid id' } })
+  }
+
+  const result = submitBidBackofficeSchema.safeParse(req.body)
+  if (!result.success) {
+    const errors = result.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message }))
+    return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid input', details: { errors } } })
+  }
+
+  const { price, biddedBy } = result.data
+
+  const auctionRequest = await prisma.auctionRequest.findUnique({ where: { id } })
+  if (!auctionRequest) {
+    return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Auction request not found' } })
+  }
+
+  if (auctionRequest.status === 'completed' || auctionRequest.status === 'cancelled') {
+    return res.status(409).json({
+      success: false,
+      error: { code: 'AUCTION_ENDED', message: `Cannot bid on a ${auctionRequest.status} auction` },
+    })
+  }
+
+  const staff = await prisma.staff.findUnique({ where: { id: biddedBy } })
+  if (!staff) {
+    return res.status(404).json({ success: false, error: { code: 'STAFF_NOT_FOUND', message: 'Staff not found' } })
+  }
+
+  const bidCount = await prisma.auctionPriceLog.count({ where: { auctionRequestId: id } })
+
+  const bid = await prisma.auctionPriceLog.create({
+    data: {
+      auctionRequestId: id,
+      price,
+      bidCount: bidCount + 1,
+      status: 'approved',
+      biddedBy,
+    },
+  })
+
+  return res.status(201).json({
+    success: true,
+    data: {
+      id: bid.id,
+      auctionRequestId: bid.auctionRequestId,
+      price: bid.price,
+      bidCount: bid.bidCount,
+      status: bid.status,
+      biddedBy: bid.biddedBy,
+      recordedAt: bid.recordedAt.toISOString(),
+    },
+    message: 'Bid submitted successfully',
+  })
+}
 
 export async function getPendingBids(_req: Request, res: Response) {
   const logs = await prisma.auctionPriceLog.findMany({
