@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "dotenv -e .env -- prisma generate --schema packages/database/prisma/schema.prisma",
     "db:migrate": "dotenv -e .env -- prisma migrate deploy --schema packages/database/prisma/schema.prisma",
-    "db:seed": "tsx packages/database/prisma/seed.ts"
+    "db:migrate:resolve": "dotenv -e .env -- prisma migrate resolve --applied 20260316000002_add_slip_submissions --schema packages/database/prisma/schema.prisma",
+    "db:seed": "dotenv -e .env -- tsx packages/database/prisma/seed.ts",
+    "db:reset": "dotenv -e .env -- prisma migrate reset --schema packages/database/prisma/schema.prisma --force"
   },
   "dependencies": {
     "@prisma/client": "^5.10.2",

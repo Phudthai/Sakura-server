@@ -17,12 +17,16 @@ async function main() {
   console.log('🌱 Starting database seed...')
 
   await prisma.paymentTransaction.deleteMany()
+  await prisma.paymentReceipt.deleteMany()
   await prisma.paymentObligation.deleteMany()
+  await prisma.walletTransaction.deleteMany()
+  await prisma.userWallet.deleteMany()
   await prisma.deliveryStage.deleteMany()
   await prisma.auctionPriceLog.deleteMany()
   await prisma.auctionRequest.deleteMany()
   await prisma.staff.deleteMany()
   await prisma.user.deleteMany()
+  await prisma.lot.deleteMany()
   console.log('🗑️  Cleared existing data')
 
   console.log('👤 Creating users...')
@@ -55,11 +59,12 @@ async function main() {
       isEmailVerified: true,
       isActive: true,
       userCode: 'm000002',
+      username: 'STAFF001',
     },
   })
   console.log(`✅ Staff user: ${staffUser.email}`)
 
-  await prisma.user.create({
+  const customer = await prisma.user.create({
     data: {
       email: 'customer@sakura.com',
       password,
@@ -72,6 +77,16 @@ async function main() {
     },
   })
   console.log('✅ Customer: customer@sakura.com')
+
+  console.log('💰 Creating user wallets...')
+  for (const u of [admin, staffUser, customer]) {
+    await prisma.userWallet.upsert({
+      where: { userId: u.id },
+      create: { userId: u.id, balance: 0, currency: 'THB' },
+      update: {},
+    })
+  }
+  console.log('✅ User wallets created')
 
   console.log('👥 Creating staffs...')
   await prisma.staff.createMany({

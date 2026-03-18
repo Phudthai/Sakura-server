@@ -8,11 +8,15 @@ import { Router } from 'express'
 import { API_BASE_PATH } from '../../config'
 import authRoutes from './auth.routes'
 import auctionRoutes from './auction.routes'
+import walletRoutes from './wallet.routes'
+import checkStatusRoutes from './check-status.routes'
 
 const router = Router()
 
 router.use('/auth', authRoutes)
 router.use('/auction-requests', auctionRoutes)
+router.use('/wallet', walletRoutes)
+router.use('/check-status', checkStatusRoutes)
 
 export const path = `${API_BASE_PATH}/enduser`
 export { router }

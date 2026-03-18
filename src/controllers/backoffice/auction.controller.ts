@@ -13,6 +13,7 @@ import {
   updateAuctionWeightGramSchema,
   assignLotToAuctionSchema,
   jpyToBaht,
+  bahtRoundUp,
 } from "../../../packages/shared/src";
 import { scrapeYahooAuction } from "../../services/auction-scraper.service";
 import { ensureNextLotExists } from "../../services/lot.service";
@@ -440,6 +441,16 @@ export async function updateAuctionWeightGram(req: Request, res: Response) {
     orderBy: { id: "desc" },
   });
 
+  const intlShippingRate =
+    existing.intlShippingType === "air" ? 0.59 : 0.35;
+  const shippingAmount = bahtRoundUp(
+    result.data.weight_gram * intlShippingRate,
+  );
+
+  const intlShippingType = await prisma.paymentObligationType.findUnique({
+    where: { code: "INTL_SHIPPING" },
+  });
+
   const updated = await prisma.$transaction(async (tx) => {
     await tx.auctionRequest.update({
       where: { id },
@@ -452,6 +463,38 @@ export async function updateAuctionWeightGram(req: Request, res: Response) {
       where: { auctionRequestId: id, stageTypeId: 1 },
       data: { status: "DELIVERED", deliveredAt: new Date() },
     });
+
+    if (intlShippingType && shippingAmount > 0) {
+      const existingObligation = await tx.paymentObligation.findFirst({
+        where: {
+          auctionRequestId: id,
+          obligationTypeId: intlShippingType.id,
+        },
+      });
+      const dueDate = existing.boughtAt ?? existing.endTime ?? new Date();
+      if (existingObligation) {
+        await tx.paymentObligation.update({
+          where: { id: existingObligation.id },
+          data: {
+            amount: shippingAmount,
+            ...(existing.userId && { userId: existing.userId }),
+          },
+        });
+      } else {
+        await tx.paymentObligation.create({
+          data: {
+            auctionRequestId: id,
+            userId: existing.userId ?? undefined,
+            obligationTypeId: intlShippingType.id,
+            amount: shippingAmount,
+            currency: "THB",
+            dueDate,
+            status: "PENDING",
+          },
+        });
+      }
+    }
+
     return tx.auctionRequest.findUniqueOrThrow({
       where: { id },
       include: {

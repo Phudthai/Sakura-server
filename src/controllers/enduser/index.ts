@@ -5,3 +5,4 @@
 
 export * from './auth.controller'
 export * from './auction.controller'
+export * from './slip.controller'

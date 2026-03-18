@@ -23,3 +23,4 @@ export * from './validators/auction.validator'
 
 // Export utils
 export * from './utils/currency.util'
+export * from './utils/month.util'

@@ -9,7 +9,7 @@
 
 import cron from "node-cron";
 import { prisma } from "../../packages/database/src";
-import { jpyToBaht } from "../../packages/shared/src";
+import { jpyToBaht, bahtRoundUp } from "../../packages/shared/src";
 import { scrapeYahooAuction } from "../services/auction-scraper.service";
 
 export function startAuctionCron(): void {
@@ -87,6 +87,10 @@ export function startAuctionCron(): void {
       where: { status: "pending", endTime: { lte: new Date() } },
     });
 
+    const productFullType = await prisma.paymentObligationType.findUnique({
+      where: { code: "PRODUCT_FULL" },
+    });
+
     for (const ar of expired) {
       const lastApprovedBid = await prisma.auctionPriceLog.findFirst({
         where: { auctionRequestId: ar.id, status: "approved" },
@@ -98,9 +102,48 @@ export function startAuctionCron(): void {
           ? "won"
           : "lost";
 
-      await prisma.auctionRequest.update({
-        where: { id: ar.id },
-        data: { status: "completed", bidResult },
+      const boughtAt = ar.endTime ?? new Date();
+
+      await prisma.$transaction(async (tx) => {
+        await tx.auctionRequest.update({
+          where: { id: ar.id },
+          data: {
+            status: "completed",
+            bidResult,
+            boughtAt,
+          },
+        });
+
+        if (
+          bidResult === "won" &&
+          productFullType &&
+          (ar.currentPriceBaht ?? 0) > 0
+        ) {
+          const existingProductObligation = await tx.paymentObligation.findFirst(
+            {
+              where: {
+                auctionRequestId: ar.id,
+                obligationTypeId: productFullType.id,
+              },
+            },
+          );
+          if (!existingProductObligation) {
+            await tx.paymentObligation.create({
+              data: {
+                auctionRequestId: ar.id,
+                userId: ar.userId ?? undefined,
+                obligationTypeId: productFullType.id,
+                amount: bahtRoundUp(ar.currentPriceBaht!),
+                currency: "THB",
+                dueDate: boughtAt,
+                status: "PENDING",
+              },
+            });
+            console.log(
+              `[AuctionCron] Created PRODUCT_FULL obligation for #${ar.id}`,
+            );
+          }
+        }
       });
 
       console.log(

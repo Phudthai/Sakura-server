@@ -33,7 +33,10 @@ model User {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  auctionRequests AuctionRequest[]
+  auctionRequests    AuctionRequest[]
+  wallet             UserWallet?
+  paymentObligations PaymentObligation[]
+  paymentReceipts    PaymentReceipt[]
 
   @@index([email])
   @@index([userCode])
@@ -142,8 +145,69 @@ model Staff {
 }
 
 // ==============================================
+// User Wallet
+// ==============================================
+
+model UserWallet {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique @map("user_id")
+  balance   Int      @default(0)
+  currency  String   @default("THB")
+  version   Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+
+  @@map("user_wallets")
+}
+
+model WalletTransaction {
+  id              Int      @id @default(autoincrement())
+  walletId        Int      @map("wallet_id")
+  amount          Int
+  balanceAfter    Int      @map("balance_after")
+  type            String
+  referenceType   String?  @map("reference_type")
+  referenceId     Int?     @map("reference_id")
+  idempotencyKey  String?  @unique @map("idempotency_key")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  wallet              UserWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  paymentTransactions PaymentTransaction[]
+
+  @@index([walletId])
+  @@index([type])
+  @@map("wallet_transactions")
+}
+
+// ==============================================
 // Payment (Normalized)
 // ==============================================
+
+model PaymentReceipt {
+  id              Int       @id @default(autoincrement())
+  userId          Int       @map("user_id")
+  amount          Int       @default(0)
+  slipImageUrl    String?   @map("slip_image_url")
+  status          String    @default("PENDING_VERIFICATION")
+  rejectionReason String?   @map("rejection_reason")
+  paidAt          DateTime? @map("paid_at")
+  month           Int?
+  year            Int?
+  transportType   String?   @map("transport_type")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions PaymentTransaction[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([month, transportType])
+  @@map("payment_receipts")
+}
 
 model PaymentObligationType {
   id     Int      @id @default(autoincrement())
@@ -158,36 +222,47 @@ model PaymentObligationType {
 
 model PaymentObligation {
   id                 Int       @id @default(autoincrement())
-  auctionRequestId   Int       @map("auction_request_id")
+  auctionRequestId   Int?      @map("auction_request_id")
+  userId             Int?      @map("user_id")
   obligationTypeId   Int       @map("obligation_type_id")
-  amount              Int
-  currency            String    @default("THB")
-  dueDate             DateTime? @map("due_date")
-  status              String    @default("PENDING")
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @updatedAt @map("updated_at")
+  amount             Int
+  currency           String    @default("THB")
+  dueDate            DateTime? @map("due_date")
+  status             String    @default("PENDING")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  auctionRequest AuctionRequest    @relation(fields: [auctionRequestId], references: [id], onDelete: Cascade)
+  auctionRequest AuctionRequest?    @relation(fields: [auctionRequestId], references: [id], onDelete: Cascade)
+  user           User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
   obligationType PaymentObligationType @relation(fields: [obligationTypeId], references: [id], onDelete: Restrict)
   transactions   PaymentTransaction[]
 
   @@index([auctionRequestId])
+  @@index([userId])
   @@index([status])
   @@map("payment_obligations")
 }
 
 model PaymentTransaction {
-  id                   Int      @id @default(autoincrement())
-  paymentObligationId   Int     @map("payment_obligation_id")
+  id                    Int      @id @default(autoincrement())
+  paymentObligationId   Int      @map("payment_obligation_id")
+  paymentReceiptId      Int?     @map("payment_receipt_id")
   amount                Int
   paidAt                DateTime @map("paid_at")
-  note                 String?
-  slipReference         String?   @map("slip_reference")
-  slipImageUrl          String?   @map("slip_image_url")
+  note                  String?
+  slipReference         String?  @map("slip_reference")
+  source                String   @default("BANK_SLIP")
+  walletTransactionId   Int?     @map("wallet_transaction_id")
+  status                String   @default("CONFIRMED")
+  rejectionReason       String?  @map("rejection_reason")
 
   paymentObligation PaymentObligation @relation(fields: [paymentObligationId], references: [id], onDelete: Cascade)
+  paymentReceipt    PaymentReceipt?   @relation(fields: [paymentReceiptId], references: [id], onDelete: SetNull)
+  walletTransaction WalletTransaction? @relation(fields: [walletTransactionId], references: [id], onDelete: SetNull)
 
   @@index([paymentObligationId])
+  @@index([paymentReceiptId])
+  @@index([status])
   @@map("payment_transactions")
 }
 

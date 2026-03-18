@@ -10,7 +10,7 @@
 import * as XLSX from 'xlsx'
 import * as path from 'path'
 import { prisma } from '../../packages/database/src'
-import { jpyToBaht } from '../../packages/shared/src'
+import { jpyToBaht, bahtRoundUp } from '../../packages/shared/src'
 
 const EXCEL_PATH = path.join(process.cwd(), 'public', 'B เมอคาริ กดเว็บ.xlsx')
 const SHEET_AIR = 'Bแอร์369'
@@ -231,8 +231,9 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
             await prisma.paymentObligation.create({
               data: {
                 auctionRequestId: auctionRequest.id,
+                userId: dbUserId,
                 obligationTypeId: obligationTypeMap['PRODUCT_FULL'],
-                amount: parsed.productPriceBaht,
+                amount: bahtRoundUp(parsed.productPriceBaht),
                 currency: 'THB',
                 dueDate: parsed.buyDate,
                 status: 'PENDING',
@@ -241,10 +242,11 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
           }
 
           if (obligationTypeId != null && parsed.shippingAmount != null && parsed.shippingAmount > 0) {
-            const shippingBaht = jpyToBaht(parsed.shippingAmount)
+            const shippingBaht = bahtRoundUp(jpyToBaht(parsed.shippingAmount)!)
             await prisma.paymentObligation.create({
               data: {
                 auctionRequestId: auctionRequest.id,
+                userId: dbUserId,
                 obligationTypeId,
                 amount: shippingBaht,
                 currency: 'THB',
