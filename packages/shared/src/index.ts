@@ -16,6 +16,7 @@ export * from './validators/auth.validator'
 
 // Export constants
 export * from './constants/order-status.const'
+export * from './constants/payment-receipt.const'
 
 // Export auction types & validators
 export * from './types/auction.types'
@@ -24,3 +25,6 @@ export * from './validators/auction.validator'
 // Export utils
 export * from './utils/currency.util'
 export * from './utils/month.util'
+
+// Exchange rate validators
+export * from './validators/exchange-rate.validator'

@@ -9,8 +9,10 @@
 
 import cron from "node-cron";
 import { prisma } from "../../packages/database/src";
-import { jpyToBaht, bahtRoundUp } from "../../packages/shared/src";
+import { bahtRoundUp } from "../../packages/shared/src";
+import { jpyToBaht } from "../services/exchange-rate.service";
 import { scrapeYahooAuction } from "../services/auction-scraper.service";
+import * as walletService from "../services/wallet.service";
 
 export function startAuctionCron(): void {
   const intervalSeconds = parseInt(
@@ -27,7 +29,7 @@ export function startAuctionCron(): void {
 
     // Fetch all pending requests that haven't ended yet
     const actives = await prisma.auctionRequest.findMany({
-      where: { status: "pending", endTime: { gt: new Date() } },
+      where: { status: "pending", end_time: { gt: new Date() } },
     });
 
     const testMode = process.env.AUCTION_CRON_TEST_MODE === "true";
@@ -38,7 +40,7 @@ export function startAuctionCron(): void {
 
         if (testMode) {
           // โหมดทดสอบ: ไม่ scrape จริง แค่ +1 เพื่อตรวจว่า update ทำงาน
-          newPrice = (ar.currentPrice ?? 0) + 1;
+          newPrice = (ar.current_price ?? 0) + 1;
           console.log(
             `[AuctionCron] TEST MODE: simulating price update for #${ar.id}`,
           );
@@ -47,31 +49,31 @@ export function startAuctionCron(): void {
           newPrice = data.currentPrice;
         }
 
-        if (ar.currentPrice !== newPrice) {
+        if (ar.current_price !== newPrice) {
           await prisma.auctionRequest.update({
             where: { id: ar.id },
             data: {
-              currentPrice: newPrice,
-              currentPriceBaht: jpyToBaht(newPrice),
+              current_price: newPrice,
+              current_price_baht: jpyToBaht(newPrice),
             },
           });
           console.log(
-            `[AuctionCron] Price updated for #${ar.id}: ${ar.currentPrice ?? "?"} → ${newPrice}`,
+            `[AuctionCron] Price updated for #${ar.id}: ${ar.current_price ?? "?"} → ${newPrice}`,
           );
         }
       } catch (err) {
         if (testMode) {
           // โหมดทดสอบ: แม้ scrape fail ก็ให้ +1 เพื่อทดสอบ
-          const newPrice = (ar.currentPrice ?? 0) + 1;
+          const newPrice = (ar.current_price ?? 0) + 1;
           await prisma.auctionRequest.update({
             where: { id: ar.id },
             data: {
-              currentPrice: newPrice,
-              currentPriceBaht: jpyToBaht(newPrice),
+              current_price: newPrice,
+              current_price_baht: jpyToBaht(newPrice),
             },
           });
           console.log(
-            `[AuctionCron] TEST MODE: scrape failed, simulated update for #${ar.id}: ${ar.currentPrice ?? "?"} → ${newPrice}`,
+            `[AuctionCron] TEST MODE: scrape failed, simulated update for #${ar.id}: ${ar.current_price ?? "?"} → ${newPrice}`,
           );
         } else {
           console.error(
@@ -82,9 +84,9 @@ export function startAuctionCron(): void {
       }
     }
 
-    // Complete expired requests + set bidResult
+    // Complete expired requests + set bid_result
     const expired = await prisma.auctionRequest.findMany({
-      where: { status: "pending", endTime: { lte: new Date() } },
+      where: { status: "pending", end_time: { lte: new Date() } },
     });
 
     const productFullType = await prisma.paymentObligationType.findUnique({
@@ -93,49 +95,49 @@ export function startAuctionCron(): void {
 
     for (const ar of expired) {
       const lastApprovedBid = await prisma.auctionPriceLog.findFirst({
-        where: { auctionRequestId: ar.id, status: "approved" },
-        orderBy: { recordedAt: "desc" },
+        where: { auction_request_id: ar.id, status: "approved" },
+        orderBy: { recorded_at: "desc" },
       });
 
       const bidResult =
-        lastApprovedBid && lastApprovedBid.price >= (ar.currentPrice ?? 0)
+        lastApprovedBid && lastApprovedBid.price >= (ar.current_price ?? 0)
           ? "won"
           : "lost";
 
-      const boughtAt = ar.endTime ?? new Date();
+      const boughtAt = ar.end_time ?? new Date();
 
       await prisma.$transaction(async (tx) => {
         await tx.auctionRequest.update({
           where: { id: ar.id },
           data: {
             status: "completed",
-            bidResult,
-            boughtAt,
+            bid_result: bidResult,
+            bought_at: boughtAt,
           },
         });
 
         if (
           bidResult === "won" &&
           productFullType &&
-          (ar.currentPriceBaht ?? 0) > 0
+          (ar.current_price_baht ?? 0) > 0
         ) {
           const existingProductObligation = await tx.paymentObligation.findFirst(
             {
               where: {
-                auctionRequestId: ar.id,
-                obligationTypeId: productFullType.id,
+                auction_request_id: ar.id,
+                obligation_type_id: productFullType.id,
               },
             },
           );
           if (!existingProductObligation) {
             await tx.paymentObligation.create({
               data: {
-                auctionRequestId: ar.id,
-                userId: ar.userId ?? undefined,
-                obligationTypeId: productFullType.id,
-                amount: bahtRoundUp(ar.currentPriceBaht!),
+                auction_request_id: ar.id,
+                user_id: ar.user_id ?? undefined,
+                obligation_type_id: productFullType.id,
+                amount: bahtRoundUp(ar.current_price_baht!),
                 currency: "THB",
-                dueDate: boughtAt,
+                due_date: boughtAt,
                 status: "PENDING",
               },
             });
@@ -145,6 +147,27 @@ export function startAuctionCron(): void {
           }
         }
       });
+
+      // Auto-sweep wallet: ตัดเงินใน wallet ไปปิดยอด obligations ตาม priority (เหมือน approve slip)
+      if (bidResult === "won" && ar.user_id) {
+        try {
+          const sweep = await walletService.sweepWalletToObligations({
+            userId: ar.user_id,
+            sweepKey: `auction-end-ar-${ar.id}`,
+          });
+          if (sweep.totalPaid > 0) {
+            console.log(
+              `[AuctionCron] Wallet sweep for user #${ar.user_id}: paid ${sweep.totalPaid} THB, ` +
+              `fully closed ${sweep.obligationsPaid.length} obligation(s)`,
+            );
+          }
+        } catch (err) {
+          console.error(
+            `[AuctionCron] Wallet sweep error for auction #${ar.id}:`,
+            err instanceof Error ? err.message : err,
+          );
+        }
+      }
 
       console.log(
         `[AuctionCron] Completed #${ar.id} — bidResult: ${bidResult}`,

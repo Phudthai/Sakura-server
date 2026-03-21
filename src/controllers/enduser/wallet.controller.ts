@@ -9,6 +9,30 @@ import * as walletService from '../../services/wallet.service'
 
 const DEFAULT_LIMIT = 20
 
+function mapTransaction(t: {
+  id: number
+  wallet_id: number
+  amount: number
+  balance_after: number
+  type: string
+  reference_type: string | null
+  reference_id: number | null
+  idempotency_key: string | null
+  created_at: Date
+}) {
+  return {
+    id: t.id,
+    walletId: t.wallet_id,
+    amount: t.amount,
+    balanceAfter: t.balance_after,
+    type: t.type,
+    referenceType: t.reference_type,
+    referenceId: t.reference_id,
+    idempotencyKey: t.idempotency_key,
+    createdAt: t.created_at,
+  }
+}
+
 export async function getWallet(req: Request, res: Response) {
   const userId = req.user?.userId
   if (!userId) {
@@ -18,10 +42,10 @@ export async function getWallet(req: Request, res: Response) {
   const limit = Math.min(parseInt(req.query.limit as string) || DEFAULT_LIMIT, 100)
 
   const wallet = await prisma.userWallet.findUnique({
-    where: { userId },
+    where: { user_id: userId },
     include: {
       transactions: {
-        orderBy: { createdAt: 'desc' },
+        orderBy: { created_at: 'desc' },
         take: limit,
       },
     },
@@ -29,7 +53,7 @@ export async function getWallet(req: Request, res: Response) {
 
   if (!wallet) {
     const created = await prisma.userWallet.create({
-      data: { userId, balance: 0, currency: 'THB' },
+      data: { user_id: userId, balance: 0, currency: 'THB' },
       include: { transactions: true },
     })
     return res.json({
@@ -37,8 +61,9 @@ export async function getWallet(req: Request, res: Response) {
       data: {
         balance: created.balance,
         currency: created.currency,
-        transactions: created.transactions,
+        transactions: created.transactions.map(mapTransaction),
       },
+      meta: { limit },
     })
   }
 
@@ -47,8 +72,9 @@ export async function getWallet(req: Request, res: Response) {
     data: {
       balance: wallet.balance,
       currency: wallet.currency,
-      transactions: wallet.transactions,
+      transactions: wallet.transactions.map(mapTransaction),
     },
+    meta: { limit },
   })
 }
 

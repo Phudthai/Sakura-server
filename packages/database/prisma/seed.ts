@@ -40,11 +40,11 @@ async function main() {
       name: 'Admin User',
       phone: '08-1111-1111',
       role: UserRole.ADMIN,
-      isEmailVerified: true,
-      isActive: true,
-      userCode: 'm000001',
+      is_email_verified: true,
+      is_active: true,
+      user_code: 'm000001',
       username: 'ADMIN001',
-      externalId: 'admin-001',
+      external_id: 'admin-001',
     },
   })
   console.log(`✅ Admin: ${admin.email}`)
@@ -56,9 +56,9 @@ async function main() {
       name: 'Staff User',
       phone: '08-2222-2222',
       role: UserRole.STAFF,
-      isEmailVerified: true,
-      isActive: true,
-      userCode: 'm000002',
+      is_email_verified: true,
+      is_active: true,
+      user_code: 'm000002',
       username: 'STAFF001',
     },
   })
@@ -71,9 +71,9 @@ async function main() {
       name: 'John Doe',
       phone: '08-3333-3333',
       role: UserRole.CUSTOMER,
-      isEmailVerified: true,
-      isActive: true,
-      userCode: 'm000003',
+      is_email_verified: true,
+      is_active: true,
+      user_code: 'm000003',
     },
   })
   console.log('✅ Customer: customer@sakura.com')
@@ -81,8 +81,8 @@ async function main() {
   console.log('💰 Creating user wallets...')
   for (const u of [admin, staffUser, customer]) {
     await prisma.userWallet.upsert({
-      where: { userId: u.id },
-      create: { userId: u.id, balance: 0, currency: 'THB' },
+      where: { user_id: u.id },
+      create: { user_id: u.id, balance: 0, currency: 'THB' },
       update: {},
     })
   }
@@ -99,32 +99,32 @@ async function main() {
 
   console.log('💰 Creating payment obligation types...')
   const obligationTypes = [
-    { code: 'PRODUCT_FULL', nameTh: 'ค่าสินค้า', nameEn: 'Product' },
-    { code: 'INTL_SHIPPING', nameTh: 'ค่าจัดส่งข้ามประเทศ', nameEn: 'International shipping' },
-    { code: 'DOMESTIC_SHIPPING', nameTh: 'ค่าจัดส่งในไทย', nameEn: 'Domestic shipping' },
-    { code: 'WALLET_TOPUP', nameTh: 'เติมเงินเข้ากระเป๋า Wallet บัญชี', nameEn: 'Wallet top-up' },
-    { code: 'OVERPAYMENT_TO_WALLET', nameTh: 'โอนเงินเกินจำนวนสินค้า (ส่วนเกินเติมเข้ากระเป๋า Wallet)', nameEn: 'Overpayment to wallet' },
+    { code: 'PRODUCT_FULL', name_th: 'ค่าสินค้า', name_en: 'Product' },
+    { code: 'INTL_SHIPPING', name_th: 'ค่าจัดส่งข้ามประเทศ', name_en: 'International shipping' },
+    { code: 'DOMESTIC_SHIPPING', name_th: 'ค่าจัดส่งในไทย', name_en: 'Domestic shipping' },
+    { code: 'WALLET_TOPUP', name_th: 'เติมเงินเข้ากระเป๋า Wallet บัญชี', name_en: 'Wallet top-up' },
+    { code: 'OVERPAYMENT_TO_WALLET', name_th: 'โอนเงินเกินจำนวนสินค้า (ส่วนเกินเติมเข้ากระเป๋า Wallet)', name_en: 'Overpayment to wallet' },
   ]
   for (const t of obligationTypes) {
     await prisma.paymentObligationType.upsert({
       where: { code: t.code },
       create: t,
-      update: { nameTh: t.nameTh, nameEn: t.nameEn },
+      update: { name_th: t.name_th, name_en: t.name_en },
     })
   }
   console.log('✅ Payment obligation types created')
 
   console.log('📦 Creating delivery stage types...')
   const deliveryStageTypes = [
-    { code: 'STAGE_1_JP_WAREHOUSE', nameTh: 'ส่งไปบ้านญี่ปุ่น', nameEn: 'To Japan warehouse', sortOrder: 1 },
-    { code: 'STAGE_2_INTL_THAILAND', nameTh: 'ส่งข้ามประเทศมาที่ไทย', nameEn: 'International to Thailand', sortOrder: 2 },
-    { code: 'STAGE_3_DOMESTIC_CUSTOMER', nameTh: 'ส่งไปที่บ้านลูกค้า', nameEn: 'Domestic to customer', sortOrder: 3 },
+    { code: 'STAGE_1_JP_WAREHOUSE', name_th: 'ส่งไปบ้านญี่ปุ่น', name_en: 'To Japan warehouse', sort_order: 1 },
+    { code: 'STAGE_2_INTL_THAILAND', name_th: 'ส่งข้ามประเทศมาที่ไทย', name_en: 'International to Thailand', sort_order: 2 },
+    { code: 'STAGE_3_DOMESTIC_CUSTOMER', name_th: 'ส่งไปที่บ้านลูกค้า', name_en: 'Domestic to customer', sort_order: 3 },
   ]
   for (const t of deliveryStageTypes) {
     await prisma.deliveryStageType.upsert({
       where: { code: t.code },
       create: t,
-      update: { nameTh: t.nameTh, nameEn: t.nameEn, sortOrder: t.sortOrder },
+      update: { name_th: t.name_th, name_en: t.name_en, sort_order: t.sort_order },
     })
   }
   console.log('✅ Delivery stage types created')

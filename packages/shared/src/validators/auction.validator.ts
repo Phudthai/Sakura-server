@@ -36,6 +36,10 @@ export const updateAuctionWeightGramSchema = z.object({
   weight_gram: z.number().int().positive("weight_gram must be positive"),
 });
 
+export const updateDomesticShippingSchema = z.object({
+  amount_baht: z.number().positive("amount_baht must be positive"),
+});
+
 export const approveBidSchema = z.object({
   biddedBy: z.number().int().positive("Staff ID is required"),
 });
@@ -70,6 +74,8 @@ export const createLotSchema = z.object({
   start_lot_at: z.coerce.date().nullable().optional(),
   end_lot_at: z.coerce.date().nullable().optional(),
   arrive_at: z.coerce.date().nullable().optional(),
+  /** Confirms lot actually arrived in Thailand (independent of planned arrive_at). */
+  is_arrived: z.boolean().optional(),
 });
 
 export const updateLotSchema = z.object({
@@ -78,6 +84,7 @@ export const updateLotSchema = z.object({
   start_lot_at: z.coerce.date().nullable().optional(),
   end_lot_at: z.coerce.date().nullable().optional(),
   arrive_at: z.coerce.date().nullable().optional(),
+  is_arrived: z.boolean().optional(),
 });
 
 export const assignLotToAuctionSchema = z.object({

@@ -28,8 +28,8 @@ function parseLotNumber(lotCode: string): number | null {
 }
 
 /**
- * Ensures the next lot exists for the given intlShippingType.
- * Creates it if the last ended lot has endLotAt < today and the next lot does not exist.
+ * Ensures the next lot exists for the given intl_shipping_type.
+ * Creates it if the last ended lot has end_lot_at < today and the next lot does not exist.
  * Idempotent: no-op if next lot already exists.
  * @returns { created: boolean } — true if a new lot was created
  */
@@ -38,15 +38,15 @@ export async function ensureNextLotExists(intlShippingType: 'air' | 'sea'): Prom
 
   const lastEndedLot = await prisma.lot.findFirst({
     where: {
-      intlShippingType,
-      endLotAt: { not: null, lt: today },
+      intl_shipping_type: intlShippingType,
+      end_lot_at: { not: null, lt: today },
     },
     orderBy: { id: 'desc' },
   })
 
   let nextNumber = 1
-  if (lastEndedLot && lastEndedLot.endLotAt) {
-    const num = parseLotNumber(lastEndedLot.lotCode)
+  if (lastEndedLot && lastEndedLot.end_lot_at) {
+    const num = parseLotNumber(lastEndedLot.lot_code)
     if (num != null) nextNumber = num + 1
   }
 
@@ -54,26 +54,26 @@ export async function ensureNextLotExists(intlShippingType: 'air' | 'sea'): Prom
 
   const exists = await prisma.lot.findUnique({
     where: {
-      lotCode_intlShippingType: {
-        lotCode: newLotCode,
-        intlShippingType,
+      lot_code_intl_shipping_type: {
+        lot_code: newLotCode,
+        intl_shipping_type: intlShippingType,
       },
     },
   })
 
   if (exists) return { created: false }
 
-  const startLotAt = lastEndedLot?.endLotAt
-    ? getStartOfNextDay(lastEndedLot.endLotAt)
+  const start_lot_at = lastEndedLot?.end_lot_at
+    ? getStartOfNextDay(lastEndedLot.end_lot_at)
     : today
 
   await prisma.lot.create({
     data: {
-      lotCode: newLotCode,
-      intlShippingType,
-      startLotAt,
-      endLotAt: null,
-      arriveAt: null,
+      lot_code: newLotCode,
+      intl_shipping_type: intlShippingType,
+      start_lot_at,
+      end_lot_at: null,
+      arrive_at: null,
     },
   })
 

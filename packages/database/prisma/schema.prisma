@@ -19,28 +19,28 @@ datasource db {
 // ==============================================
 
 model User {
-  id             Int       @id @default(autoincrement())
-  userCode       String    @unique @map("user_code")
-  username       String?   @unique
-  externalId     String?   @unique @map("external_id")
-  email          String?   @unique
-  password       String?
-  name           String?
-  phone          String?
-  role           UserRole  @default(CUSTOMER)
-  isEmailVerified Boolean  @default(false)
-  isActive       Boolean   @default(true)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id              Int      @id @default(autoincrement())
+  user_code       String   @unique @map("user_code")
+  username        String?  @unique
+  external_id     String?  @unique @map("external_id")
+  email           String?  @unique
+  password        String?
+  name            String?
+  phone           String?
+  role            UserRole @default(CUSTOMER)
+  is_email_verified Boolean @default(false) @map("is_email_verified")
+  is_active       Boolean  @default(true) @map("is_active")
+  created_at      DateTime @default(now()) @map("created_at")
+  updated_at      DateTime @updatedAt @map("updated_at")
 
-  auctionRequests    AuctionRequest[]
-  wallet             UserWallet?
-  paymentObligations PaymentObligation[]
-  paymentReceipts    PaymentReceipt[]
+  auction_requests    AuctionRequest[]
+  wallet              UserWallet?
+  payment_obligations PaymentObligation[]
+  payment_receipts    PaymentReceipt[]
 
   @@index([email])
-  @@index([userCode])
-  @@index([createdAt])
+  @@index([user_code])
+  @@index([created_at])
   @@index([role])
   @@map("users")
 }
@@ -57,20 +57,21 @@ enum UserRole {
 
 model Lot {
   id               Int       @id @default(autoincrement())
-  lotCode          String    @map("lot_code")
-  intlShippingType String    @map("intl_shipping_type")
-  startLotAt       DateTime? @map("start_lot_at")
-  endLotAt         DateTime? @map("end_lot_at")
-  arriveAt         DateTime? @map("arrive_at")
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  lot_code         String    @map("lot_code")
+  intl_shipping_type String  @map("intl_shipping_type")
+  start_lot_at     DateTime? @map("start_lot_at")
+  end_lot_at       DateTime? @map("end_lot_at")
+  arrive_at        DateTime? @map("arrive_at")
+  is_arrived       Boolean   @default(false) @map("is_arrived")
+  created_at       DateTime  @default(now()) @map("created_at")
+  updated_at       DateTime  @updatedAt @map("updated_at")
 
-  auctionRequests AuctionRequest[]
+  auction_requests AuctionRequest[]
 
-  @@unique([lotCode, intlShippingType])
-  @@index([lotCode])
-  @@index([intlShippingType])
-  @@index([intlShippingType, endLotAt])
+  @@unique([lot_code, intl_shipping_type])
+  @@index([lot_code])
+  @@index([intl_shipping_type])
+  @@index([intl_shipping_type, end_lot_at])
   @@map("lots")
 }
 
@@ -79,69 +80,86 @@ model Lot {
 // ==============================================
 
 model AuctionRequest {
-  id           Int       @id @default(autoincrement())
-  userId       Int?
-  url          String
-  web          String?   @default("yahoo")
-  itemId       String?   @map("item_id")
-  title        String?
-  imageUrl     String?
-  endTime      DateTime?
-  status           String    @default("pending")
-  currentPrice     Int?
-  currentPriceBaht Int?      @map("current_price_baht")
-  note             String?
-  bidResult         String?   @map("bid_result")
-  weightGram        Int?      @map("weight_gram")
-  intlShippingType  String?   @map("intl_shipping_type")
-  lotId              Int?      @map("lot_id")
-  boughtAt          DateTime? @map("bought_at")
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id                 Int       @id @default(autoincrement())
+  user_id            Int?      @map("user_id")
+  url                String
+  web                String?   @default("yahoo")
+  item_id            String?   @map("item_id")
+  title              String?
+  image_url          String?   @map("image_url")
+  end_time           DateTime? @map("end_time")
+  status             String    @default("pending")
+  current_price      Int?      @map("current_price")
+  current_price_baht Int?      @map("current_price_baht")
+  note               String?
+  bid_result         String?   @map("bid_result")
+  weight_gram        Int?      @map("weight_gram")
+  intl_shipping_type String?   @map("intl_shipping_type")
+  lot_id             Int?      @map("lot_id")
+  bought_at          DateTime? @map("bought_at")
+  created_at         DateTime  @default(now()) @map("created_at")
+  updated_at         DateTime  @updatedAt @map("updated_at")
 
-  user       User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
-  lot        Lot?              @relation(fields: [lotId], references: [id], onDelete: SetNull)
-  priceLogs  AuctionPriceLog[]
-  paymentObligations PaymentObligation[]
-  deliveryStages DeliveryStage[]
+  user               User?              @relation(fields: [user_id], references: [id], onDelete: SetNull)
+  lot                Lot?               @relation(fields: [lot_id], references: [id], onDelete: SetNull)
+  price_logs         AuctionPriceLog[]
+  payment_obligations PaymentObligation[]
+  delivery_stages    DeliveryStage[]
 
   @@index([status])
-  @@index([userId])
+  @@index([user_id])
   @@index([web])
-  @@index([createdAt])
-  @@index([status, createdAt])
-  @@index([userId, createdAt])
+  @@index([created_at])
+  @@index([status, created_at])
+  @@index([user_id, created_at])
   @@map("auction_requests")
 }
 
 model AuctionPriceLog {
-  id               Int      @id @default(autoincrement())
-  auctionRequestId Int
-  price            Int
-  bidCount         Int      @default(0)
-  status           String   @default("pending")
-  biddedBy         Int?
-  recordedAt       DateTime @default(now())
+  id                 Int      @id @default(autoincrement())
+  auction_request_id Int      @map("auction_request_id")
+  price              Int
+  bid_count          Int      @default(0) @map("bid_count")
+  status             String   @default("pending")
+  bidded_by          Int?     @map("bidded_by")
+  recorded_at        DateTime @default(now()) @map("recorded_at")
 
-  auctionRequest AuctionRequest @relation(fields: [auctionRequestId], references: [id], onDelete: Cascade)
-  staff          Staff?         @relation(fields: [biddedBy], references: [id], onDelete: SetNull)
+  auction_request AuctionRequest @relation(fields: [auction_request_id], references: [id], onDelete: Cascade)
+  staff           Staff?         @relation(fields: [bidded_by], references: [id], onDelete: SetNull)
 
-  @@index([auctionRequestId])
-  @@index([biddedBy])
+  @@index([auction_request_id])
+  @@index([bidded_by])
   @@index([status])
-  @@index([status, recordedAt])
+  @@index([status, recorded_at])
   @@map("auction_price_logs")
 }
 
 model Staff {
-  id        Int      @id @default(autoincrement())
-  name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         Int      @id @default(autoincrement())
+  name       String
+  created_at DateTime @default(now()) @map("created_at")
+  updated_at DateTime @updatedAt @map("updated_at")
 
-  priceLogs AuctionPriceLog[]
+  price_logs AuctionPriceLog[]
 
   @@map("staffs")
+}
+
+// ==============================================
+// Exchange rates (JPY → THB tiers)
+// ==============================================
+
+model JpyThbRateTier {
+  id         Int      @id @default(autoincrement())
+  min_jpy    Int      @map("min_jpy")
+  max_jpy    Int?     @map("max_jpy")
+  rate       Decimal  @db.Decimal(10, 6)
+  sort_order Int      @default(0) @map("sort_order")
+  created_at DateTime @default(now()) @map("created_at")
+  updated_at DateTime @updatedAt @map("updated_at")
+
+  @@index([sort_order])
+  @@map("jpy_thb_rate_tiers")
 }
 
 // ==============================================
@@ -149,35 +167,35 @@ model Staff {
 // ==============================================
 
 model UserWallet {
-  id        Int      @id @default(autoincrement())
-  userId    Int      @unique @map("user_id")
-  balance   Int      @default(0)
-  currency  String   @default("THB")
-  version   Int      @default(0)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id         Int      @id @default(autoincrement())
+  user_id    Int      @unique @map("user_id")
+  balance    Int      @default(0)
+  currency   String   @default("THB")
+  version    Int      @default(0)
+  created_at DateTime @default(now()) @map("created_at")
+  updated_at DateTime @updatedAt @map("updated_at")
 
-  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User                @relation(fields: [user_id], references: [id], onDelete: Cascade)
   transactions WalletTransaction[]
 
   @@map("user_wallets")
 }
 
 model WalletTransaction {
-  id              Int      @id @default(autoincrement())
-  walletId        Int      @map("wallet_id")
-  amount          Int
-  balanceAfter    Int      @map("balance_after")
-  type            String
-  referenceType   String?  @map("reference_type")
-  referenceId     Int?     @map("reference_id")
-  idempotencyKey  String?  @unique @map("idempotency_key")
-  createdAt       DateTime @default(now()) @map("created_at")
+  id               Int      @id @default(autoincrement())
+  wallet_id        Int      @map("wallet_id")
+  amount           Int
+  balance_after    Int      @map("balance_after")
+  type             String
+  reference_type   String?  @map("reference_type")
+  reference_id     Int?     @map("reference_id")
+  idempotency_key  String?  @unique @map("idempotency_key")
+  created_at       DateTime @default(now()) @map("created_at")
 
-  wallet              UserWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  paymentTransactions PaymentTransaction[]
+  wallet               UserWallet          @relation(fields: [wallet_id], references: [id], onDelete: Cascade)
+  payment_transactions PaymentTransaction[]
 
-  @@index([walletId])
+  @@index([wallet_id])
   @@index([type])
   @@map("wallet_transactions")
 }
@@ -187,33 +205,36 @@ model WalletTransaction {
 // ==============================================
 
 model PaymentReceipt {
-  id              Int       @id @default(autoincrement())
-  userId          Int       @map("user_id")
-  amount          Int       @default(0)
-  slipImageUrl    String?   @map("slip_image_url")
-  status          String    @default("PENDING_VERIFICATION")
-  rejectionReason String?   @map("rejection_reason")
-  paidAt          DateTime? @map("paid_at")
-  month           Int?
-  year            Int?
-  transportType   String?   @map("transport_type")
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id               Int       @id @default(autoincrement())
+  user_id          Int       @map("user_id")
+  amount           Int       @default(0)
+  slip_image_url   String?   @map("slip_image_url")
+  status           String    @default("PENDING_VERIFICATION")
+  rejection_reason String?   @map("rejection_reason")
+  paid_at          DateTime? @map("paid_at")
+  month            Int?
+  year             Int?
+  transport_type   String?   @map("transport_type")
+  // null = monthly intl slip; DOMESTIC_SHIPPING = domestic fee only
+  purpose          String?   @map("purpose")
+  created_at       DateTime  @default(now()) @map("created_at")
+  updated_at       DateTime  @updatedAt @map("updated_at")
 
-  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
   transactions PaymentTransaction[]
 
-  @@index([userId])
+  @@index([user_id])
   @@index([status])
-  @@index([month, transportType])
+  @@index([month, transport_type])
+  @@index([user_id, purpose, status])
   @@map("payment_receipts")
 }
 
 model PaymentObligationType {
-  id     Int      @id @default(autoincrement())
-  code   String   @unique
-  nameTh String   @map("name_th")
-  nameEn String   @map("name_en")
+  id      Int    @id @default(autoincrement())
+  code    String @unique
+  name_th String @map("name_th")
+  name_en String @map("name_en")
 
   obligations PaymentObligation[]
 
@@ -221,47 +242,47 @@ model PaymentObligationType {
 }
 
 model PaymentObligation {
-  id                 Int       @id @default(autoincrement())
-  auctionRequestId   Int?      @map("auction_request_id")
-  userId             Int?      @map("user_id")
-  obligationTypeId   Int       @map("obligation_type_id")
-  amount             Int
-  currency           String    @default("THB")
-  dueDate            DateTime? @map("due_date")
-  status             String    @default("PENDING")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
+  id                  Int       @id @default(autoincrement())
+  auction_request_id  Int?      @map("auction_request_id")
+  user_id             Int?      @map("user_id")
+  obligation_type_id  Int       @map("obligation_type_id")
+  amount              Int
+  currency            String    @default("THB")
+  due_date            DateTime? @map("due_date")
+  status              String    @default("PENDING")
+  created_at          DateTime  @default(now()) @map("created_at")
+  updated_at          DateTime  @updatedAt @map("updated_at")
 
-  auctionRequest AuctionRequest?    @relation(fields: [auctionRequestId], references: [id], onDelete: Cascade)
-  user           User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  obligationType PaymentObligationType @relation(fields: [obligationTypeId], references: [id], onDelete: Restrict)
-  transactions   PaymentTransaction[]
+  auction_request  AuctionRequest?       @relation(fields: [auction_request_id], references: [id], onDelete: Cascade)
+  user             User?                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  obligation_type  PaymentObligationType @relation(fields: [obligation_type_id], references: [id], onDelete: Restrict)
+  transactions     PaymentTransaction[]
 
-  @@index([auctionRequestId])
-  @@index([userId])
+  @@index([auction_request_id])
+  @@index([user_id])
   @@index([status])
   @@map("payment_obligations")
 }
 
 model PaymentTransaction {
   id                    Int      @id @default(autoincrement())
-  paymentObligationId   Int      @map("payment_obligation_id")
-  paymentReceiptId      Int?     @map("payment_receipt_id")
+  payment_obligation_id Int      @map("payment_obligation_id")
+  payment_receipt_id    Int?     @map("payment_receipt_id")
   amount                Int
-  paidAt                DateTime @map("paid_at")
+  paid_at               DateTime @map("paid_at")
   note                  String?
-  slipReference         String?  @map("slip_reference")
+  slip_reference        String?  @map("slip_reference")
   source                String   @default("BANK_SLIP")
-  walletTransactionId   Int?     @map("wallet_transaction_id")
+  wallet_transaction_id Int?     @map("wallet_transaction_id")
   status                String   @default("CONFIRMED")
-  rejectionReason       String?  @map("rejection_reason")
+  rejection_reason      String?  @map("rejection_reason")
 
-  paymentObligation PaymentObligation @relation(fields: [paymentObligationId], references: [id], onDelete: Cascade)
-  paymentReceipt    PaymentReceipt?   @relation(fields: [paymentReceiptId], references: [id], onDelete: SetNull)
-  walletTransaction WalletTransaction? @relation(fields: [walletTransactionId], references: [id], onDelete: SetNull)
+  payment_obligation PaymentObligation  @relation(fields: [payment_obligation_id], references: [id], onDelete: Cascade)
+  payment_receipt    PaymentReceipt?    @relation(fields: [payment_receipt_id], references: [id], onDelete: SetNull)
+  wallet_transaction WalletTransaction? @relation(fields: [wallet_transaction_id], references: [id], onDelete: SetNull)
 
-  @@index([paymentObligationId])
-  @@index([paymentReceiptId])
+  @@index([payment_obligation_id])
+  @@index([payment_receipt_id])
   @@index([status])
   @@map("payment_transactions")
 }
@@ -271,11 +292,11 @@ model PaymentTransaction {
 // ==============================================
 
 model DeliveryStageType {
-  id        Int      @id @default(autoincrement())
-  code      String   @unique
-  nameTh    String   @map("name_th")
-  nameEn    String   @map("name_en")
-  sortOrder Int      @default(0) @map("sort_order")
+  id         Int    @id @default(autoincrement())
+  code       String @unique
+  name_th    String @map("name_th")
+  name_en    String @map("name_en")
+  sort_order Int    @default(0) @map("sort_order")
 
   stages DeliveryStage[]
 
@@ -284,21 +305,22 @@ model DeliveryStageType {
 
 model DeliveryStage {
   id                 Int       @id @default(autoincrement())
-  auctionRequestId   Int       @map("auction_request_id")
-  stageTypeId        Int       @map("stage_type_id")
+  auction_request_id Int       @map("auction_request_id")
+  stage_type_id      Int       @map("stage_type_id")
   status             String    @default("PENDING")
-  trackingNumber     String?   @map("tracking_number")
+  tracking_number    String?   @map("tracking_number")
   carrier            String?
-  shippedAt          DateTime? @map("shipped_at")
-  deliveredAt        DateTime? @map("delivered_at")
+  shipped_at         DateTime? @map("shipped_at")
+  delivered_at       DateTime? @map("delivered_at")
+  is_paid            Boolean   @default(false) @map("is_paid")
   note               String?
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
+  created_at         DateTime  @default(now()) @map("created_at")
+  updated_at         DateTime  @updatedAt @map("updated_at")
 
-  auctionRequest AuctionRequest   @relation(fields: [auctionRequestId], references: [id], onDelete: Cascade)
-  stageType      DeliveryStageType @relation(fields: [stageTypeId], references: [id], onDelete: Restrict)
+  auction_request AuctionRequest    @relation(fields: [auction_request_id], references: [id], onDelete: Cascade)
+  stage_type      DeliveryStageType @relation(fields: [stage_type_id], references: [id], onDelete: Restrict)
 
-  @@index([auctionRequestId])
+  @@index([auction_request_id])
   @@index([status])
   @@map("delivery_stages")
 }

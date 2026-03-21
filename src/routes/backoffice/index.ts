@@ -17,6 +17,7 @@ import customerRoutes from './customer.routes'
 import paymentRoutes from './payment.routes'
 import slipSubmissionsRoutes from './slip-submissions.routes'
 import walletRoutes from './wallet.routes'
+import exchangeRateRoutes from './exchange-rate.routes'
 
 const router = Router()
 
@@ -29,6 +30,7 @@ router.use(customerRoutes)
 router.use('/payment-obligations', paymentRoutes)
 router.use('/slip-submissions', slipSubmissionsRoutes)
 router.use('/wallet', walletRoutes)
+router.use(exchangeRateRoutes)
 router.get('/users/:id/wallet', requireAuth(['ADMIN', 'STAFF']), walletController.getUserWallet)
 
 export const path = `${API_BASE_PATH}/backoffice`

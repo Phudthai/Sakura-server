@@ -31,7 +31,7 @@ export async function loginBackoffice(req: Request, res: Response) {
       return res.status(401).json({ success: false, error: { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' } })
     }
 
-    if (!user.isActive) {
+    if (!user.is_active) {
       return res.status(403).json({ success: false, error: { code: 'ACCOUNT_DISABLED', message: 'This account has been deactivated' } })
     }
 
@@ -62,8 +62,8 @@ export async function loginBackoffice(req: Request, res: Response) {
           name: user.name ?? null,
           phone: user.phone,
           role: user.role,
-          isEmailVerified: user.isEmailVerified,
-          createdAt: user.createdAt,
+          isEmailVerified: user.is_email_verified,
+          createdAt: user.created_at,
         },
       },
       message: 'Logged in successfully',
@@ -78,12 +78,13 @@ export async function meBackoffice(req: Request, res: Response) {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user!.userId },
-      select: { id: true, email: true, name: true, phone: true, userCode: true, username: true, role: true, isEmailVerified: true, createdAt: true },
+      select: { id: true, email: true, name: true, phone: true, user_code: true, username: true, role: true, is_email_verified: true, created_at: true },
     })
     if (!user) {
       return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } })
     }
-    return res.json({ success: true, data: { user } })
+    const { user_code, is_email_verified, created_at, ...userFields } = user
+    return res.json({ success: true, data: { user: { ...userFields, userCode: user_code, isEmailVerified: is_email_verified, createdAt: created_at } } })
   } catch (error) {
     console.error('[Backoffice Me Error]', error)
     return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Something went wrong. Please try again.' } })

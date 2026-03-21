@@ -6,6 +6,30 @@
 import { Request, Response } from 'express'
 import { prisma } from '../../../packages/database/src'
 
+function mapTransaction(t: {
+  id: number
+  wallet_id: number
+  amount: number
+  balance_after: number
+  type: string
+  reference_type: string | null
+  reference_id: number | null
+  idempotency_key: string | null
+  created_at: Date
+}) {
+  return {
+    id: t.id,
+    walletId: t.wallet_id,
+    amount: t.amount,
+    balanceAfter: t.balance_after,
+    type: t.type,
+    referenceType: t.reference_type,
+    referenceId: t.reference_id,
+    idempotencyKey: t.idempotency_key,
+    createdAt: t.created_at,
+  }
+}
+
 export async function createTopupObligation(req: Request, res: Response) {
   const userId = parseInt(req.body.userId)
   if (isNaN(userId)) {
@@ -31,25 +55,25 @@ export async function createTopupObligation(req: Request, res: Response) {
 
   const obligation = await prisma.paymentObligation.create({
     data: {
-      userId,
-      auctionRequestId: null,
-      obligationTypeId: walletTopupType.id,
+      user_id: userId,
+      auction_request_id: null,
+      obligation_type_id: walletTopupType.id,
       amount,
       currency: 'THB',
       status: 'PENDING',
     },
-    include: { obligationType: true },
+    include: { obligation_type: true },
   })
 
   return res.status(201).json({
     success: true,
     data: {
       id: obligation.id,
-      userId: obligation.userId,
+      userId: obligation.user_id,
       amount: obligation.amount,
       currency: obligation.currency,
       status: obligation.status,
-      obligationType: obligation.obligationType.code,
+      obligationType: obligation.obligation_type.code,
     },
     message: 'Wallet top-up obligation created',
   })
@@ -67,7 +91,7 @@ export async function getUserWallet(req: Request, res: Response) {
       wallet: {
         include: {
           transactions: {
-            orderBy: { createdAt: 'desc' },
+            orderBy: { created_at: 'desc' },
             take: 50,
           },
         },
@@ -82,17 +106,17 @@ export async function getUserWallet(req: Request, res: Response) {
   const wallet = user.wallet
   if (!wallet) {
     const created = await prisma.userWallet.create({
-      data: { userId: user.id, balance: 0, currency: 'THB' },
+      data: { user_id: user.id, balance: 0, currency: 'THB' },
       include: { transactions: true },
     })
     return res.json({
       success: true,
       data: {
         userId: user.id,
-        userCode: user.userCode,
+        userCode: user.user_code,
         balance: created.balance,
         currency: created.currency,
-        transactions: created.transactions,
+        transactions: created.transactions.map(mapTransaction),
       },
     })
   }
@@ -101,10 +125,10 @@ export async function getUserWallet(req: Request, res: Response) {
     success: true,
     data: {
       userId: user.id,
-      userCode: user.userCode,
+      userCode: user.user_code,
       balance: wallet.balance,
       currency: wallet.currency,
-      transactions: wallet.transactions,
+      transactions: wallet.transactions.map(mapTransaction),
     },
   })
 }

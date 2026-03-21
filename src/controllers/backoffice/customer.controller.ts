@@ -9,31 +9,31 @@ import { prisma } from '../../../packages/database/src'
 export async function listCustomers(_req: Request, res: Response) {
   const customers = await prisma.user.findMany({
     where: { role: 'CUSTOMER' },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { created_at: 'desc' },
     select: {
       id: true,
-      userCode: true,
+      user_code: true,
       username: true,
       email: true,
       name: true,
       phone: true,
-      isActive: true,
-      isEmailVerified: true,
-      createdAt: true,
+      is_active: true,
+      is_email_verified: true,
+      created_at: true,
     },
   })
   return res.json({
     success: true,
     data: customers.map((c) => ({
       id: c.id,
-      userCode: c.userCode,
+      userCode: c.user_code,
       username: c.username ?? null,
       email: c.email ?? null,
       name: c.name ?? null,
       phone: c.phone ?? null,
-      isActive: c.isActive,
-      isEmailVerified: c.isEmailVerified,
-      createdAt: c.createdAt.toISOString(),
+      isActive: c.is_active,
+      isEmailVerified: c.is_email_verified,
+      createdAt: c.created_at.toISOString(),
     })),
   })
 }

@@ -13,6 +13,7 @@ import * as checkStatusController from "../../controllers/enduser/check-status.c
 
 const router = Router();
 
+router.get("/domestic-pending-items", requireAuth(), checkStatusController.getDomesticPendingItems);
 router.get("/", requireAuth(), checkStatusController.getCheckStatus);
 router.get("/months", requireAuth(), checkStatusController.getMonths);
 const UPLOADS_DIR = path.join(process.cwd(), "uploads", "slips");

@@ -7,9 +7,12 @@ import { Request, Response } from 'express'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../../../packages/database/src'
 import * as walletService from '../../services/wallet.service'
+import { markUserDomesticStage3Paid } from '../../services/domestic-shipping.service'
+import { PAYMENT_RECEIPT_PURPOSE_DOMESTIC } from '../../../packages/shared/src'
 
 const BANGKOK_TZ = 'Asia/Bangkok'
-const OBLIGATION_TYPES_ALLOCATABLE = ['PRODUCT_FULL', 'INTL_SHIPPING']
+/** Monthly slip: product + intl only (domestic uses separate slip purpose). */
+const OBLIGATION_TYPES_MONTHLY_SLIP = ['PRODUCT_FULL', 'INTL_SHIPPING']
 const OBLIGATION_TYPE_OVERPAYMENT = 'OVERPAYMENT_TO_WALLET'
 
 export async function listPendingSlips(req: Request, res: Response) {
@@ -20,11 +23,11 @@ export async function listPendingSlips(req: Request, res: Response) {
   const [data, total] = await Promise.all([
     prisma.paymentReceipt.findMany({
       where: { status: 'PENDING_VERIFICATION' },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { created_at: 'desc' },
       skip,
       take: limit,
       include: {
-        user: { select: { id: true, userCode: true, name: true, email: true } },
+        user: { select: { id: true, user_code: true, name: true, email: true } },
       },
     }),
     prisma.paymentReceipt.count({ where: { status: 'PENDING_VERIFICATION' } }),
@@ -34,15 +37,16 @@ export async function listPendingSlips(req: Request, res: Response) {
     success: true,
     data: data.map((r) => ({
       receiptId: r.id,
-      userId: r.userId,
+      userId: r.user_id,
       user: r.user,
       month: r.month,
       year: r.year,
-      transportType: r.transportType,
-      slipImageUrl: r.slipImageUrl,
+      transportType: r.transport_type,
+      purpose: r.purpose ?? null,
+      slipImageUrl: r.slip_image_url,
       amount: r.amount,
       status: r.status,
-      createdAt: r.createdAt.toISOString(),
+      createdAt: r.created_at.toISOString(),
     })),
     meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
   })
@@ -70,52 +74,96 @@ export async function approveSlip(req: Request, res: Response) {
     return res.status(400).json({ success: false, error: { code: 'INVALID_STATUS', message: 'Receipt is not pending verification' } })
   }
 
-  const userId = receipt.userId
+  const userId = receipt.user_id
   const paidAt = new Date()
   const receiptMonth = receipt.month
-  const receiptYear = receipt.year ?? receipt.createdAt.getFullYear()
-  const receiptTransportType = receipt.transportType
+  const receiptYear = receipt.year ?? receipt.created_at.getFullYear()
+  const receiptTransportType = receipt.transport_type
+  const receiptPurpose = receipt.purpose ?? null
 
-  const typeIds = await prisma.paymentObligationType.findMany({
-    where: { code: { in: OBLIGATION_TYPES_ALLOCATABLE } },
-    select: { id: true },
-  })
+  let obligations: Awaited<
+    ReturnType<
+      typeof prisma.paymentObligation.findMany<{
+        include: {
+          obligation_type: true
+          auction_request: { include: { lot: true } }
+          transactions: { select: { amount: true } }
+        }
+      }>
+    >
+  > = []
 
-  const transportTypes =
-    receiptTransportType === 'sea'
-      ? ['sea', 'ship']
-      : receiptTransportType === 'air'
-        ? ['air', 'airplane']
-        : receiptTransportType
-          ? [receiptTransportType]
-          : []
+  if (receiptPurpose === PAYMENT_RECEIPT_PURPOSE_DOMESTIC) {
+    const domesticType = await prisma.paymentObligationType.findUnique({
+      where: { code: 'DOMESTIC_SHIPPING' },
+    })
+    if (!domesticType) {
+      return res.status(500).json({ success: false, error: { code: 'MISSING_TYPE', message: 'DOMESTIC_SHIPPING type missing' } })
+    }
+    const domesticOb = await prisma.paymentObligation.findFirst({
+      where: {
+        user_id: userId,
+        obligation_type_id: domesticType.id,
+        status: 'PENDING',
+      },
+      include: {
+        obligation_type: true,
+        auction_request: { include: { lot: true } },
+        transactions: { select: { amount: true } },
+      },
+      orderBy: { id: 'asc' },
+    })
+    if (!domesticOb) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'NO_PENDING_DOMESTIC',
+          message: 'No pending domestic shipping obligation for this user',
+        },
+      })
+    }
+    obligations = [domesticOb]
+  } else {
+    const typeIds = await prisma.paymentObligationType.findMany({
+      where: { code: { in: OBLIGATION_TYPES_MONTHLY_SLIP } },
+      select: { id: true },
+    })
 
-  const arIds =
-    receiptMonth != null && transportTypes.length > 0
-      ? (
-          await prisma.$queryRaw<{ id: number }[]>(
-            Prisma.sql`
+    const transportTypes =
+      receiptTransportType === 'sea'
+        ? ['sea', 'ship']
+        : receiptTransportType === 'air'
+          ? ['air', 'airplane']
+          : receiptTransportType
+            ? [receiptTransportType]
+            : []
+
+    const arIds =
+      receiptMonth != null && transportTypes.length > 0
+        ? (
+            await prisma.$queryRaw<{ id: number }[]>(
+              Prisma.sql`
             SELECT ar.id FROM auction_requests ar
-            WHERE ar."userId" = ${userId}
+            WHERE ar.user_id = ${userId}
               AND ar.bought_at IS NOT NULL
               AND ar.intl_shipping_type IN (${Prisma.join(transportTypes)})
               AND EXTRACT(MONTH FROM ar.bought_at AT TIME ZONE 'UTC' AT TIME ZONE ${BANGKOK_TZ}) = ${receiptMonth}
               AND EXTRACT(YEAR FROM ar.bought_at AT TIME ZONE 'UTC' AT TIME ZONE ${BANGKOK_TZ}) = ${receiptYear}
           `,
-          )
-        ).map((r) => r.id)
-      : []
+            )
+          ).map((r) => r.id)
+        : []
 
-  const obligationIdsFromUser =
-    arIds.length === 0 &&
-    receiptMonth != null &&
-    transportTypes.length > 0
-      ? (
-          await prisma.$queryRaw<{ id: number }[]>(
-            Prisma.sql`
+    const obligationIdsFromUser =
+      arIds.length === 0 &&
+      receiptMonth != null &&
+      transportTypes.length > 0
+        ? (
+            await prisma.$queryRaw<{ id: number }[]>(
+              Prisma.sql`
             SELECT po.id FROM payment_obligations po
             JOIN auction_requests ar ON po.auction_request_id = ar.id
-            WHERE (po.user_id = ${userId} OR (po.user_id IS NULL AND ar."userId" = ${userId}))
+            WHERE (po.user_id = ${userId} OR (po.user_id IS NULL AND ar.user_id = ${userId}))
               AND po.obligation_type_id IN (${Prisma.join(typeIds.map((t) => t.id))})
               AND po.status = 'PENDING'
               AND ar.bought_at IS NOT NULL
@@ -123,61 +171,62 @@ export async function approveSlip(req: Request, res: Response) {
               AND EXTRACT(MONTH FROM ar.bought_at AT TIME ZONE 'UTC' AT TIME ZONE ${BANGKOK_TZ}) = ${receiptMonth}
               AND EXTRACT(YEAR FROM ar.bought_at AT TIME ZONE 'UTC' AT TIME ZONE ${BANGKOK_TZ}) = ${receiptYear}
           `,
-          )
-        ).map((r) => r.id)
-      : []
+            )
+          ).map((r) => r.id)
+        : []
 
-  const obligationsRaw =
-    arIds.length > 0
-      ? await prisma.paymentObligation.findMany({
-          where: {
-            auctionRequestId: { in: arIds },
-            obligationTypeId: { in: typeIds.map((t) => t.id) },
-            status: 'PENDING',
-          },
-          include: {
-            obligationType: true,
-            auctionRequest: { include: { lot: true } },
-            transactions: { select: { amount: true } },
-          },
-        })
-      : obligationIdsFromUser.length > 0
+    const obligationsRaw =
+      arIds.length > 0
         ? await prisma.paymentObligation.findMany({
             where: {
-              id: { in: obligationIdsFromUser },
-              obligationTypeId: { in: typeIds.map((t) => t.id) },
+              auction_request_id: { in: arIds },
+              obligation_type_id: { in: typeIds.map((t) => t.id) },
               status: 'PENDING',
             },
             include: {
-              obligationType: true,
-              auctionRequest: { include: { lot: true } },
+              obligation_type: true,
+              auction_request: { include: { lot: true } },
               transactions: { select: { amount: true } },
             },
           })
-        : []
+        : obligationIdsFromUser.length > 0
+          ? await prisma.paymentObligation.findMany({
+              where: {
+                id: { in: obligationIdsFromUser },
+                obligation_type_id: { in: typeIds.map((t) => t.id) },
+                status: 'PENDING',
+              },
+              include: {
+                obligation_type: true,
+                auction_request: { include: { lot: true } },
+                transactions: { select: { amount: true } },
+              },
+            })
+          : []
 
-  const obligations = obligationsRaw.sort((a, b) => {
-    const lotA = a.auctionRequest?.lot
-    const lotB = b.auctionRequest?.lot
-    const hasLotA = !!lotA
-    const hasLotB = !!lotB
-    if (hasLotA !== hasLotB) return hasLotA ? -1 : 1
-    if (hasLotA && hasLotB) {
-      const endA = lotA!.endLotAt?.getTime() ?? Number.MAX_SAFE_INTEGER
-      const endB = lotB!.endLotAt?.getTime() ?? Number.MAX_SAFE_INTEGER
-      if (endA !== endB) return endA - endB
-    }
-    const arA = a.auctionRequest
-    const arB = b.auctionRequest
-    const endDateA = (arA?.endTime ?? arA?.boughtAt)?.getTime() ?? 0
-    const endDateB = (arB?.endTime ?? arB?.boughtAt)?.getTime() ?? 0
-    if (endDateA !== endDateB) return endDateA - endDateB
-    const typeOrder = { PRODUCT_FULL: 0, INTL_SHIPPING: 1 }
-    const orderA = typeOrder[a.obligationType?.code as keyof typeof typeOrder] ?? 2
-    const orderB = typeOrder[b.obligationType?.code as keyof typeof typeOrder] ?? 2
-    if (orderA !== orderB) return orderA - orderB
-    return a.createdAt.getTime() - b.createdAt.getTime()
-  })
+    obligations = obligationsRaw.sort((a, b) => {
+      const lotA = a.auction_request?.lot
+      const lotB = b.auction_request?.lot
+      const hasLotA = !!lotA
+      const hasLotB = !!lotB
+      if (hasLotA !== hasLotB) return hasLotA ? -1 : 1
+      if (hasLotA && hasLotB) {
+        const endA = lotA!.end_lot_at?.getTime() ?? Number.MAX_SAFE_INTEGER
+        const endB = lotB!.end_lot_at?.getTime() ?? Number.MAX_SAFE_INTEGER
+        if (endA !== endB) return endA - endB
+      }
+      const arA = a.auction_request
+      const arB = b.auction_request
+      const endDateA = (arA?.end_time ?? arA?.bought_at)?.getTime() ?? 0
+      const endDateB = (arB?.end_time ?? arB?.bought_at)?.getTime() ?? 0
+      if (endDateA !== endDateB) return endDateA - endDateB
+      const typeOrder = { PRODUCT_FULL: 0, INTL_SHIPPING: 1 }
+      const orderA = typeOrder[a.obligation_type?.code as keyof typeof typeOrder] ?? 1
+      const orderB = typeOrder[b.obligation_type?.code as keyof typeof typeOrder] ?? 1
+      if (orderA !== orderB) return orderA - orderB
+      return a.created_at.getTime() - b.created_at.getTime()
+    })
+  }
 
   const overpaymentType = await prisma.paymentObligationType.findFirst({
     where: { code: OBLIGATION_TYPE_OVERPAYMENT },
@@ -202,23 +251,23 @@ export async function approveSlip(req: Request, res: Response) {
   const result = await prisma.$transaction(async (db) => {
     await db.paymentReceipt.update({
       where: { id: receiptId },
-      data: { amount, status: 'CONFIRMED', paidAt },
+      data: { amount, status: 'CONFIRMED', paid_at: paidAt },
     })
 
     for (const { obligationId, amount: allocAmount } of allocations) {
       await db.paymentTransaction.create({
         data: {
-          paymentObligationId: obligationId,
-          paymentReceiptId: receiptId,
+          payment_obligation_id: obligationId,
+          payment_receipt_id: receiptId,
           amount: allocAmount,
-          paidAt,
+          paid_at: paidAt,
           source: 'BANK_SLIP',
           status: 'CONFIRMED',
         },
       })
       const ob = await db.paymentObligation.findUniqueOrThrow({
         where: { id: obligationId },
-        include: { transactions: true },
+        include: { transactions: true, obligation_type: true },
       })
       const totalPaid = ob.transactions.reduce((s, t) => s + t.amount, 0)
       if (totalPaid >= ob.amount) {
@@ -226,14 +275,18 @@ export async function approveSlip(req: Request, res: Response) {
           where: { id: obligationId },
           data: { status: 'PAID' },
         })
+        if (ob.obligation_type.code === 'DOMESTIC_SHIPPING') {
+          const uid = ob.user_id
+          if (uid != null) await markUserDomesticStage3Paid(uid, db)
+        }
       }
     }
 
     if (remaining > 0 && userId) {
       const overpayOb = await db.paymentObligation.create({
         data: {
-          userId,
-          obligationTypeId: overpaymentType.id,
+          user_id: userId,
+          obligation_type_id: overpaymentType.id,
           amount: remaining,
           status: 'PAID',
           currency: 'THB',
@@ -241,10 +294,10 @@ export async function approveSlip(req: Request, res: Response) {
       })
       await db.paymentTransaction.create({
         data: {
-          paymentObligationId: overpayOb.id,
-          paymentReceiptId: receiptId,
+          payment_obligation_id: overpayOb.id,
+          payment_receipt_id: receiptId,
           amount: remaining,
-          paidAt,
+          paid_at: paidAt,
           source: 'BANK_SLIP',
           status: 'CONFIRMED',
         },
@@ -261,6 +314,13 @@ export async function approveSlip(req: Request, res: Response) {
     }
     return { allocations, overpaymentAmount: 0, overpaymentObligationId: null as number | null }
   })
+
+  if (userId) {
+    await walletService.sweepWalletToObligations({
+      userId,
+      sweepKey: `slip-approve-${receiptId}-${Date.now()}`,
+    })
+  }
 
   const walletCredited = result.overpaymentAmount > 0
 
@@ -297,7 +357,7 @@ export async function rejectSlip(req: Request, res: Response) {
 
   await prisma.paymentReceipt.update({
     where: { id: receiptId },
-    data: { status: 'REJECTED', rejectionReason: reason },
+    data: { status: 'REJECTED', rejection_reason: reason },
   })
 
   return res.json({

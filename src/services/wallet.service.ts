@@ -5,6 +5,7 @@
  */
 
 import { prisma } from '../../packages/database/src'
+import { markUserDomesticStage3Paid } from './domestic-shipping.service'
 
 type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
 
@@ -21,20 +22,20 @@ export type WalletTxType = (typeof WALLET_TX_TYPES)[keyof typeof WALLET_TX_TYPES
 const MAX_RETRIES = 5
 
 async function getOrCreateWallet(userId: number) {
-  let wallet = await prisma.userWallet.findUnique({ where: { userId } })
+  let wallet = await prisma.userWallet.findUnique({ where: { user_id: userId } })
   if (!wallet) {
     wallet = await prisma.userWallet.create({
-      data: { userId, balance: 0, currency: 'THB' },
+      data: { user_id: userId, balance: 0, currency: 'THB' },
     })
   }
   return wallet
 }
 
 async function getOrCreateWalletWithTx(tx: TxClient, userId: number) {
-  let wallet = await tx.userWallet.findUnique({ where: { userId } })
+  let wallet = await tx.userWallet.findUnique({ where: { user_id: userId } })
   if (!wallet) {
     wallet = await tx.userWallet.create({
-      data: { userId, balance: 0, currency: 'THB' },
+      data: { user_id: userId, balance: 0, currency: 'THB' },
     })
   }
   return wallet
@@ -70,13 +71,13 @@ export async function creditWalletWithTx(
 
   const wt = await tx.walletTransaction.create({
     data: {
-      walletId: wallet.id,
+      wallet_id: wallet.id,
       amount,
-      balanceAfter: newBalance,
+      balance_after: newBalance,
       type,
-      referenceType: referenceType ?? null,
-      referenceId: referenceId ?? null,
-      idempotencyKey: idempotencyKey ?? null,
+      reference_type: referenceType ?? null,
+      reference_id: referenceId ?? null,
+      idempotency_key: idempotencyKey ?? null,
     },
   })
   const updatedWallet = await tx.userWallet.findUniqueOrThrow({ where: { id: wallet.id } })
@@ -99,10 +100,10 @@ export async function creditWallet(params: {
 
   if (idempotencyKey) {
     const existing = await prisma.walletTransaction.findUnique({
-      where: { idempotencyKey },
+      where: { idempotency_key: idempotencyKey },
       include: { wallet: true },
     })
-    if (existing && existing.wallet.userId === userId) {
+    if (existing && existing.wallet.user_id === userId) {
       return { walletTransaction: existing, wallet: existing.wallet }
     }
   }
@@ -121,13 +122,13 @@ export async function creditWallet(params: {
 
       const wt = await tx.walletTransaction.create({
         data: {
-          walletId: wallet.id,
+          wallet_id: wallet.id,
           amount,
-          balanceAfter: newBalance,
+          balance_after: newBalance,
           type,
-          referenceType: referenceType ?? null,
-          referenceId: referenceId ?? null,
-          idempotencyKey: idempotencyKey ?? null,
+          reference_type: referenceType ?? null,
+          reference_id: referenceId ?? null,
+          idempotency_key: idempotencyKey ?? null,
         },
       })
       const updatedWallet = await tx.userWallet.findUniqueOrThrow({ where: { id: wallet.id } })
@@ -155,10 +156,10 @@ export async function debitWallet(params: {
 
   if (idempotencyKey) {
     const existing = await prisma.walletTransaction.findUnique({
-      where: { idempotencyKey },
+      where: { idempotency_key: idempotencyKey },
       include: { wallet: true },
     })
-    if (existing && existing.wallet.userId === userId) {
+    if (existing && existing.wallet.user_id === userId) {
       return { walletTransaction: existing, wallet: existing.wallet }
     }
   }
@@ -179,13 +180,13 @@ export async function debitWallet(params: {
 
       const wt = await tx.walletTransaction.create({
         data: {
-          walletId: wallet.id,
+          wallet_id: wallet.id,
           amount: -amount,
-          balanceAfter: newBalance,
+          balance_after: newBalance,
           type,
-          referenceType: referenceType ?? null,
-          referenceId: referenceId ?? null,
-          idempotencyKey: idempotencyKey ?? null,
+          reference_type: referenceType ?? null,
+          reference_id: referenceId ?? null,
+          idempotency_key: idempotencyKey ?? null,
         },
       })
       const updatedWallet = await tx.userWallet.findUniqueOrThrow({ where: { id: wallet.id } })
@@ -195,6 +196,133 @@ export async function debitWallet(params: {
     if (updated) return updated
   }
   throw new Error('Wallet update failed: optimistic lock conflict')
+}
+
+/**
+ * Sweep wallet balance to cover all PENDING obligations (PRODUCT_FULL + INTL_SHIPPING only;
+ * DOMESTIC_SHIPPING is excluded so customers can batch multiple lots before paying domestic fee).
+ * Priority order matches backoffice approveSlip:
+ *   1. Items with lot → oldest lot first (by lot.end_lot_at ASC)
+ *   2. Items without lot → oldest auction end date first
+ *   3. Within same priority → PRODUCT_FULL before INTL_SHIPPING
+ *
+ * Partial payment allowed — deducts as much as wallet balance allows.
+ * Each obligation deduction is independently idempotent via sweepKey.
+ */
+export async function sweepWalletToObligations(params: {
+  userId: number
+  sweepKey: string
+}): Promise<{ totalPaid: number; obligationsPaid: number[] }> {
+  const { userId, sweepKey } = params
+
+  const obligations = await prisma.paymentObligation.findMany({
+    where: {
+      user_id: userId,
+      status: 'PENDING',
+      obligation_type: { code: { in: ['PRODUCT_FULL', 'INTL_SHIPPING'] } },
+    },
+    include: {
+      obligation_type: true,
+      auction_request: { include: { lot: true } },
+      transactions: { select: { amount: true } },
+    },
+  })
+
+  const TYPE_ORDER: Record<string, number> = { PRODUCT_FULL: 0, INTL_SHIPPING: 1 }
+  obligations.sort((a, b) => {
+    const lotA = a.auction_request?.lot
+    const lotB = b.auction_request?.lot
+    const hasLotA = !!lotA
+    const hasLotB = !!lotB
+    if (hasLotA !== hasLotB) return hasLotA ? -1 : 1
+    if (hasLotA && hasLotB) {
+      const endA = lotA!.end_lot_at?.getTime() ?? Number.MAX_SAFE_INTEGER
+      const endB = lotB!.end_lot_at?.getTime() ?? Number.MAX_SAFE_INTEGER
+      if (endA !== endB) return endA - endB
+    }
+    const arA = a.auction_request
+    const arB = b.auction_request
+    const endDateA = (arA?.end_time ?? arA?.bought_at)?.getTime() ?? 0
+    const endDateB = (arB?.end_time ?? arB?.bought_at)?.getTime() ?? 0
+    if (endDateA !== endDateB) return endDateA - endDateB
+    const typeOrder = (TYPE_ORDER[a.obligation_type.code] ?? 2) - (TYPE_ORDER[b.obligation_type.code] ?? 2)
+    if (typeOrder !== 0) return typeOrder
+    return a.created_at.getTime() - b.created_at.getTime()
+  })
+
+  let totalPaid = 0
+  const obligationsPaid: number[] = []
+
+  for (const ob of obligations) {
+    const wallet = await prisma.userWallet.findUnique({ where: { user_id: userId } })
+    if (!wallet || wallet.balance <= 0) break
+
+    const paidSoFar = ob.transactions.reduce((s, t) => s + t.amount, 0)
+    const stillDue = Math.max(0, ob.amount - paidSoFar)
+    if (stillDue <= 0) continue
+
+    const idempotencyKey = `${sweepKey}-ob-${ob.id}`
+    const existingWt = await prisma.walletTransaction.findUnique({ where: { idempotency_key: idempotencyKey } })
+    if (existingWt) continue
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      const freshWallet = await prisma.userWallet.findUnique({ where: { user_id: userId } })
+      if (!freshWallet || freshWallet.balance <= 0) break
+
+      const actualDeduct = Math.min(freshWallet.balance, stillDue)
+      const newBalance = freshWallet.balance - actualDeduct
+      const newVersion = freshWallet.version + 1
+
+      const result = await prisma.$transaction(async (tx) => {
+        const w = await tx.userWallet.updateMany({
+          where: { id: freshWallet.id, version: freshWallet.version },
+          data: { balance: newBalance, version: newVersion },
+        })
+        if (w.count === 0) return null
+
+        const wt = await tx.walletTransaction.create({
+          data: {
+            wallet_id: freshWallet.id,
+            amount: -actualDeduct,
+            balance_after: newBalance,
+            type: WALLET_TX_TYPES.PAYMENT_DEBIT,
+            reference_type: 'PaymentObligation',
+            reference_id: ob.id,
+            idempotency_key: idempotencyKey,
+          },
+        })
+
+        await tx.paymentTransaction.create({
+          data: {
+            payment_obligation_id: ob.id,
+            amount: actualDeduct,
+            paid_at: new Date(),
+            source: 'WALLET',
+            wallet_transaction_id: wt.id,
+            status: 'CONFIRMED',
+          },
+        })
+
+        const totalPaidOb = paidSoFar + actualDeduct
+        if (totalPaidOb >= ob.amount) {
+          await tx.paymentObligation.update({
+            where: { id: ob.id },
+            data: { status: 'PAID' },
+          })
+          obligationsPaid.push(ob.id)
+        }
+
+        return actualDeduct
+      })
+
+      if (result !== null) {
+        totalPaid += result
+        break
+      }
+    }
+  }
+
+  return { totalPaid, obligationsPaid }
 }
 
 /**
@@ -209,22 +337,22 @@ export async function payObligationFromWallet(params: {
 
   const obligation = await prisma.paymentObligation.findUnique({
     where: { id: obligationId },
-    include: { obligationType: true, auctionRequest: true },
+    include: { obligation_type: true, auction_request: true },
   })
   if (!obligation) throw new Error('Obligation not found')
 
-  const effectiveUserId = obligation.userId ?? obligation.auctionRequest?.userId
+  const effectiveUserId = obligation.user_id ?? obligation.auction_request?.user_id
   if (effectiveUserId !== userId) throw new Error('Obligation does not belong to user')
 
   if (obligation.status === 'PAID') throw new Error('Obligation already paid')
 
   const walletTypes = ['WALLET_TOPUP', 'OVERPAYMENT_TO_WALLET']
-  if (walletTypes.includes(obligation.obligationType.code)) {
+  if (walletTypes.includes(obligation.obligation_type.code)) {
     throw new Error('Cannot pay wallet top-up or overpayment obligation from wallet')
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    const wallet = await tx.userWallet.findUnique({ where: { userId } })
+    const wallet = await tx.userWallet.findUnique({ where: { user_id: userId } })
     if (!wallet) throw new Error('Wallet not found')
     if (wallet.balance < obligation.amount) throw new Error('Insufficient balance')
 
@@ -239,23 +367,23 @@ export async function payObligationFromWallet(params: {
 
     const wt = await tx.walletTransaction.create({
       data: {
-        walletId: wallet.id,
+        wallet_id: wallet.id,
         amount: -obligation.amount,
-        balanceAfter: newBalance,
+        balance_after: newBalance,
         type: WALLET_TX_TYPES.PAYMENT_DEBIT,
-        referenceType: 'PaymentObligation',
-        referenceId: obligationId,
-        idempotencyKey: idempotencyKey ?? null,
+        reference_type: 'PaymentObligation',
+        reference_id: obligationId,
+        idempotency_key: idempotencyKey ?? null,
       },
     })
 
     const pt = await tx.paymentTransaction.create({
       data: {
-        paymentObligationId: obligationId,
+        payment_obligation_id: obligationId,
         amount: obligation.amount,
-        paidAt: new Date(),
+        paid_at: new Date(),
         source: 'WALLET',
-        walletTransactionId: wt.id,
+        wallet_transaction_id: wt.id,
       },
     })
 
@@ -263,6 +391,10 @@ export async function payObligationFromWallet(params: {
       where: { id: obligationId },
       data: { status: 'PAID' },
     })
+
+    if (obligation.obligation_type.code === 'DOMESTIC_SHIPPING') {
+      await markUserDomesticStage3Paid(userId, tx)
+    }
 
     const updatedWallet = await tx.userWallet.findUniqueOrThrow({ where: { id: wallet.id } })
     return { walletTransaction: wt, paymentTransaction: pt, wallet: updatedWallet }

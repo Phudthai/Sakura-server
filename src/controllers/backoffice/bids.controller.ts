@@ -38,15 +38,15 @@ export async function submitBidBackoffice(req: Request, res: Response) {
     return res.status(404).json({ success: false, error: { code: 'STAFF_NOT_FOUND', message: 'Staff not found' } })
   }
 
-  const bidCount = await prisma.auctionPriceLog.count({ where: { auctionRequestId: id } })
+  const bidCount = await prisma.auctionPriceLog.count({ where: { auction_request_id: id } })
 
   const bid = await prisma.auctionPriceLog.create({
     data: {
-      auctionRequestId: id,
+      auction_request_id: id,
       price,
-      bidCount: bidCount + 1,
+      bid_count: bidCount + 1,
       status: 'approved',
-      biddedBy,
+      bidded_by: biddedBy,
     },
   })
 
@@ -54,12 +54,12 @@ export async function submitBidBackoffice(req: Request, res: Response) {
     success: true,
     data: {
       id: bid.id,
-      auctionRequestId: bid.auctionRequestId,
+      auctionRequestId: bid.auction_request_id,
       price: bid.price,
-      bidCount: bid.bidCount,
+      bidCount: bid.bid_count,
       status: bid.status,
-      biddedBy: bid.biddedBy,
-      recordedAt: bid.recordedAt.toISOString(),
+      biddedBy: bid.bidded_by,
+      recordedAt: bid.recorded_at.toISOString(),
     },
     message: 'Bid submitted successfully',
   })
@@ -68,20 +68,20 @@ export async function submitBidBackoffice(req: Request, res: Response) {
 export async function getPendingBids(_req: Request, res: Response) {
   const logs = await prisma.auctionPriceLog.findMany({
     where: { status: 'pending' },
-    orderBy: { recordedAt: 'asc' },
+    orderBy: { recorded_at: 'asc' },
     include: {
-      auctionRequest: {
+      auction_request: {
         select: {
           id: true,
           url: true,
           title: true,
-          imageUrl: true,
+          image_url: true,
           web: true,
-          itemId: true,
-          currentPrice: true,
-          endTime: true,
+          item_id: true,
+          current_price: true,
+          end_time: true,
           note: true,
-          user: { select: { userCode: true, username: true, externalId: true } },
+          user: { select: { user_code: true, username: true, external_id: true } },
         },
       },
       staff: { select: { id: true, name: true } },
@@ -92,26 +92,26 @@ export async function getPendingBids(_req: Request, res: Response) {
     success: true,
     data: logs.map((l) => ({
       id: l.id,
-      auctionRequestId: l.auctionRequestId,
+      auctionRequestId: l.auction_request_id,
       price: l.price,
-      bidCount: l.bidCount,
+      bidCount: l.bid_count,
       status: l.status,
       staff: l.staff,
-      recordedAt: l.recordedAt.toISOString(),
-      auctionRequest: l.auctionRequest
+      recordedAt: l.recorded_at.toISOString(),
+      auctionRequest: l.auction_request
         ? {
-            id: l.auctionRequest.id,
-            url: l.auctionRequest.url,
-            title: l.auctionRequest.title,
-            imageUrl: l.auctionRequest.imageUrl,
-            web: l.auctionRequest.web,
-            itemId: l.auctionRequest.itemId,
-            currentPrice: l.auctionRequest.currentPrice,
-            endTime: l.auctionRequest.endTime?.toISOString() ?? null,
-            note: l.auctionRequest.note,
-            userCode: l.auctionRequest.user?.userCode ?? null,
-            username: l.auctionRequest.user?.username ?? null,
-            externalId: l.auctionRequest.user?.externalId ?? null,
+            id: l.auction_request.id,
+            url: l.auction_request.url,
+            title: l.auction_request.title,
+            imageUrl: l.auction_request.image_url,
+            web: l.auction_request.web,
+            itemId: l.auction_request.item_id,
+            currentPrice: l.auction_request.current_price,
+            endTime: l.auction_request.end_time?.toISOString() ?? null,
+            note: l.auction_request.note,
+            userCode: l.auction_request.user?.user_code ?? null,
+            username: l.auction_request.user?.username ?? null,
+            externalId: l.auction_request.user?.external_id ?? null,
           }
         : null,
     })),
@@ -145,12 +145,20 @@ export async function approveBid(req: Request, res: Response) {
 
   const updated = await prisma.auctionPriceLog.update({
     where: { id },
-    data: { status: 'approved', biddedBy: result.data.biddedBy },
+    data: { status: 'approved', bidded_by: result.data.biddedBy },
   })
 
   return res.json({
     success: true,
-    data: { ...updated, recordedAt: updated.recordedAt.toISOString() },
+    data: {
+      id: updated.id,
+      auctionRequestId: updated.auction_request_id,
+      price: updated.price,
+      bidCount: updated.bid_count,
+      status: updated.status,
+      biddedBy: updated.bidded_by,
+      recordedAt: updated.recorded_at.toISOString(),
+    },
     message: `Bid #${id} approved — assigned to ${staff.name}`,
   })
 }
@@ -182,7 +190,16 @@ export async function rejectBid(req: Request, res: Response) {
 
   return res.json({
     success: true,
-    data: { ...updated, recordedAt: updated.recordedAt.toISOString(), rejectReason: result.data.reason },
+    data: {
+      id: updated.id,
+      auctionRequestId: updated.auction_request_id,
+      price: updated.price,
+      bidCount: updated.bid_count,
+      status: updated.status,
+      biddedBy: updated.bidded_by,
+      recordedAt: updated.recorded_at.toISOString(),
+      rejectReason: result.data.reason,
+    },
     message: `Bid #${id} rejected`,
   })
 }

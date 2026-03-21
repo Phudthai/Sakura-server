@@ -32,7 +32,7 @@ export async function login(req: Request, res: Response) {
       return res.status(401).json({ success: false, error: { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' } })
     }
 
-    if (!user.isActive) {
+    if (!user.is_active) {
       return res.status(403).json({ success: false, error: { code: 'ACCOUNT_DISABLED', message: 'This account has been deactivated' } })
     }
 
@@ -56,8 +56,8 @@ export async function login(req: Request, res: Response) {
           name: user.name ?? null,
           phone: user.phone,
           role: user.role,
-          isEmailVerified: user.isEmailVerified,
-          createdAt: user.createdAt,
+          isEmailVerified: user.is_email_verified,
+          createdAt: user.created_at,
         },
       },
       message: 'Logged in successfully',
@@ -80,7 +80,7 @@ export async function register(req: Request, res: Response) {
     const hashedPassword = await hash(password, 12)
 
     if (user_code) {
-      const placeholder = await prisma.user.findUnique({ where: { userCode: user_code } })
+      const placeholder = await prisma.user.findUnique({ where: { user_code: user_code } })
       if (!placeholder) {
         return res.status(404).json({ success: false, error: { code: 'INVALID_USER_CODE', message: 'Invalid user code' } })
       }
@@ -101,15 +101,15 @@ export async function register(req: Request, res: Response) {
           name,
           phone: phone ?? null,
           username: username ?? null,
-          externalId: userId ?? placeholder.externalId,
+          external_id: userId ?? placeholder.external_id,
         },
-        select: { id: true, email: true, name: true, phone: true, userCode: true, username: true, externalId: true, role: true, isEmailVerified: true, createdAt: true },
+        select: { id: true, email: true, name: true, phone: true, user_code: true, username: true, external_id: true, role: true, is_email_verified: true, created_at: true },
       })
 
       const token = signToken({ userId: user.id, email: user.email ?? '', role: user.role })
 
-      if (user.externalId) {
-        importFromExcel(user.externalId, user.id).catch((err) => {
+      if (user.external_id) {
+        importFromExcel(user.external_id, user.id).catch((err) => {
           console.error('[Excel Import]', err)
         })
       }
@@ -123,12 +123,12 @@ export async function register(req: Request, res: Response) {
             email: user.email ?? null,
             name: user.name ?? null,
             phone: user.phone,
-            userCode: user.userCode,
+            userCode: user.user_code,
             username: user.username ?? undefined,
-            userId: user.externalId ?? undefined,
+            userId: user.external_id ?? undefined,
             role: user.role,
-            isEmailVerified: user.isEmailVerified,
-            createdAt: user.createdAt,
+            isEmailVerified: user.is_email_verified,
+            createdAt: user.created_at,
           },
         },
         message: 'Account created successfully',
@@ -147,20 +147,20 @@ export async function register(req: Request, res: Response) {
         password: hashedPassword,
         name,
         phone: phone ?? null,
-        userCode,
+        user_code: userCode,
         username: username ?? null,
-        externalId: userId ?? null,
+        external_id: userId ?? null,
         role: 'CUSTOMER',
-        isEmailVerified: false,
-        isActive: true,
+        is_email_verified: false,
+        is_active: true,
       },
-      select: { id: true, email: true, name: true, phone: true, userCode: true, username: true, externalId: true, role: true, isEmailVerified: true, createdAt: true },
+      select: { id: true, email: true, name: true, phone: true, user_code: true, username: true, external_id: true, role: true, is_email_verified: true, created_at: true },
     })
 
     const token = signToken({ userId: user.id, email: user.email ?? '', role: user.role })
 
-    if (user.externalId) {
-      importFromExcel(user.externalId, user.id).catch((err) => {
+    if (user.external_id) {
+      importFromExcel(user.external_id, user.id).catch((err) => {
         console.error('[Excel Import]', err)
       })
     }
@@ -174,12 +174,12 @@ export async function register(req: Request, res: Response) {
           email: user.email ?? null,
           name: user.name ?? null,
           phone: user.phone,
-          userCode: user.userCode,
+          userCode: user.user_code,
           username: user.username ?? undefined,
-          userId: user.externalId ?? undefined,
+          userId: user.external_id ?? undefined,
           role: user.role,
-          isEmailVerified: user.isEmailVerified,
-          createdAt: user.createdAt,
+          isEmailVerified: user.is_email_verified,
+          createdAt: user.created_at,
         },
       },
       message: 'Account created successfully',
@@ -194,12 +194,29 @@ export async function me(req: Request, res: Response) {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user!.userId },
-      select: { id: true, email: true, name: true, phone: true, userCode: true, username: true, role: true, isEmailVerified: true, createdAt: true },
+      select: {
+        id: true, email: true, name: true, phone: true,
+        user_code: true, username: true, role: true,
+        is_email_verified: true, created_at: true,
+        wallet: { select: { balance: true, currency: true } },
+      },
     })
     if (!user) {
       return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } })
     }
-    return res.json({ success: true, data: { user } })
+    const { wallet, user_code, is_email_verified, created_at, ...userFields } = user
+    return res.json({
+      success: true,
+      data: {
+        ...userFields,
+        userCode: user_code,
+        isEmailVerified: is_email_verified,
+        createdAt: created_at,
+        wallet: wallet
+          ? { balance: wallet.balance, currency: wallet.currency }
+          : { balance: 0, currency: 'THB' },
+      },
+    })
   } catch (error) {
     console.error('[Me Error]', error)
     return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Something went wrong. Please try again.' } })

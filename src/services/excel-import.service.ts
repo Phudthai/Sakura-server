@@ -10,7 +10,8 @@
 import * as XLSX from 'xlsx'
 import * as path from 'path'
 import { prisma } from '../../packages/database/src'
-import { jpyToBaht, bahtRoundUp } from '../../packages/shared/src'
+import { bahtRoundUp } from '../../packages/shared/src'
+import { jpyToBaht } from './exchange-rate.service'
 
 const EXCEL_PATH = path.join(process.cwd(), 'public', 'B เมอคาริ กดเว็บ.xlsx')
 const SHEET_AIR = 'Bแอร์369'
@@ -160,7 +161,7 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
     })
     const obligationTypeMap = Object.fromEntries(obligationTypes.map((t) => [t.code, t.id]))
 
-    const stageTypes = await prisma.deliveryStageType.findMany({ orderBy: { sortOrder: 'asc' } })
+    const stageTypes = await prisma.deliveryStageType.findMany({ orderBy: { sort_order: 'asc' } })
     const stage1 = stageTypes.find((s) => s.code === 'STAGE_1_JP_WAREHOUSE')
     const stage2 = stageTypes.find((s) => s.code === 'STAGE_2_INTL_THAILAND')
     if (!stage1 || !stage2) {
@@ -201,8 +202,8 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
           if (parsed.lotRaw && intlShippingType) {
             const lot = await prisma.lot.findFirst({
               where: {
-                lotCode: String(parsed.lotRaw).trim(),
-                intlShippingType,
+                lot_code: String(parsed.lotRaw).trim(),
+                intl_shipping_type: intlShippingType,
               },
             })
             if (lot) lotId = lot.id
@@ -210,19 +211,19 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
 
           const auctionRequest = await prisma.auctionRequest.create({
             data: {
-              userId: dbUserId,
+              user_id: dbUserId,
               url: urlClean,
               web: parsed.web ?? 'unknown',
-              itemId,
+              item_id: itemId,
               title: parsed.title,
-              imageUrl,
-              intlShippingType,
-              currentPrice: parsed.currentPrice,
-              currentPriceBaht: jpyToBaht(parsed.currentPrice),
-              weightGram: parsed.weightGram,
-              boughtAt: parsed.buyDate,
-              lotId,
-              bidResult: 'won',
+              image_url: imageUrl,
+              intl_shipping_type: intlShippingType,
+              current_price: parsed.currentPrice,
+              current_price_baht: jpyToBaht(parsed.currentPrice),
+              weight_gram: parsed.weightGram,
+              bought_at: parsed.buyDate,
+              lot_id: lotId,
+              bid_result: 'won',
               status: 'completed',
             },
           })
@@ -230,12 +231,12 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
           if (obligationTypeMap['PRODUCT_FULL'] != null && parsed.productPriceBaht != null && parsed.productPriceBaht > 0) {
             await prisma.paymentObligation.create({
               data: {
-                auctionRequestId: auctionRequest.id,
-                userId: dbUserId,
-                obligationTypeId: obligationTypeMap['PRODUCT_FULL'],
+                auction_request_id: auctionRequest.id,
+                user_id: dbUserId,
+                obligation_type_id: obligationTypeMap['PRODUCT_FULL'],
                 amount: bahtRoundUp(parsed.productPriceBaht),
                 currency: 'THB',
-                dueDate: parsed.buyDate,
+                due_date: parsed.buyDate,
                 status: 'PENDING',
               },
             })
@@ -245,12 +246,12 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
             const shippingBaht = bahtRoundUp(jpyToBaht(parsed.shippingAmount)!)
             await prisma.paymentObligation.create({
               data: {
-                auctionRequestId: auctionRequest.id,
-                userId: dbUserId,
-                obligationTypeId,
+                auction_request_id: auctionRequest.id,
+                user_id: dbUserId,
+                obligation_type_id: obligationTypeId,
                 amount: shippingBaht,
                 currency: 'THB',
-                dueDate: parsed.buyDate,
+                due_date: parsed.buyDate,
                 status: 'PENDING',
               },
             })
@@ -258,27 +259,27 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
 
           await prisma.deliveryStage.createMany({
             data: stageTypes.map((st) => ({
-              auctionRequestId: auctionRequest.id,
-              stageTypeId: st.id,
+              auction_request_id: auctionRequest.id,
+              stage_type_id: st.id,
               status: 'PENDING',
             })),
           })
 
           const createdIds = await prisma.deliveryStage.findMany({
-            where: { auctionRequestId: auctionRequest.id },
+            where: { auction_request_id: auctionRequest.id },
             orderBy: { id: 'asc' },
           })
 
           if (parsed.toJapanAt && createdIds[0]) {
             await prisma.deliveryStage.update({
               where: { id: createdIds[0].id },
-              data: { status: 'DELIVERED', deliveredAt: parsed.toJapanAt },
+              data: { status: 'DELIVERED', delivered_at: parsed.toJapanAt },
             })
           }
           if (parsed.lotDeliveredAt && createdIds[1]) {
             await prisma.deliveryStage.update({
               where: { id: createdIds[1].id },
-              data: { status: 'DELIVERED', deliveredAt: parsed.lotDeliveredAt },
+              data: { status: 'DELIVERED', delivered_at: parsed.lotDeliveredAt },
             })
           }
 

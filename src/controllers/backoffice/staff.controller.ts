@@ -15,7 +15,7 @@ export async function listStaffs(_req: Request, res: Response) {
     data: staffs.map((s) => ({
       id: s.id,
       name: s.name,
-      createdAt: s.createdAt.toISOString(),
+      createdAt: s.created_at.toISOString(),
     })),
   })
 }
@@ -31,7 +31,7 @@ export async function createStaff(req: Request, res: Response) {
 
   return res.status(201).json({
     success: true,
-    data: { id: staff.id, name: staff.name, createdAt: staff.createdAt.toISOString() },
+    data: { id: staff.id, name: staff.name, createdAt: staff.created_at.toISOString() },
     message: `Staff "${staff.name}" created`,
   })
 }
@@ -57,7 +57,7 @@ export async function updateStaff(req: Request, res: Response) {
 
   return res.json({
     success: true,
-    data: { id: updated.id, name: updated.name, createdAt: updated.createdAt.toISOString() },
+    data: { id: updated.id, name: updated.name, createdAt: updated.created_at.toISOString() },
     message: 'Staff updated',
   })
 }

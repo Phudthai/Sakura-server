@@ -26,8 +26,8 @@ export async function generateUserCode(
 ): Promise<string> {
   const last = await prisma.user.findFirst({
     orderBy: { id: 'desc' },
-    select: { userCode: true },
+    select: { user_code: true },
   })
-  const num = last ? parseInt(last.userCode.replace(/^m/, ''), 10) + 1 : 1
+  const num = last ? parseInt(last.user_code.replace(/^m/, ''), 10) + 1 : 1
   return `m${String(num).padStart(6, '0')}`
 }

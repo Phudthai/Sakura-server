@@ -16,6 +16,7 @@ import * as enduser from "./routes/enduser";
 import * as backoffice from "./routes/backoffice";
 import { startAuctionCron } from "./jobs/auction-cron.job";
 import { startLotCron } from "./jobs/lot-cron.job";
+import { reloadJpyThbTiers } from "./services/exchange-rate.service";
 
 const app = express();
 const PORT = process.env.PORT || process.env.API_PORT || 4000;
@@ -69,6 +70,9 @@ app.get(`${API_BASE_PATH}/test-db`, async (_req, res) => {
 async function start() {
   await prisma.$connect();
   console.log("Database connected");
+
+  await reloadJpyThbTiers();
+  console.log("JPY→THB tiers loaded");
 
   app.listen(PORT, () => {
     console.log(`🚀 API server running on http://localhost:${PORT}`);

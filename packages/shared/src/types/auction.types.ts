@@ -9,25 +9,25 @@
 
 export interface AuctionRequestDto {
   id: number
-  userId: string | null
+  user_id: string | null
   url: string
   web: string | null
-  itemId: string | null
+  item_id: string | null
   title: string | null
-  imageUrl: string | null
-  endTime: string | null
+  image_url: string | null
+  end_time: string | null
   status: string
-  currentPrice: number | null
-  bidCount: number | null
+  current_price: number | null
+  bid_count: number | null
   deliveryStages: DeliveryStageDto[]
   isDeliveried: boolean
-  weightGram: number | null
+  weight_gram: number | null
   shippingPrice: number | null
-  intlShippingType: string | null
+  intl_shipping_type: string | null
   lot: string | null
-  boughtAt: string | null
-  createdAt: string
-  updatedAt: string
+  bought_at: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface DeliveryStageDto {
@@ -35,16 +35,18 @@ export interface DeliveryStageDto {
   stageTypeCode: string
   stageTypeNameTh: string
   status: string
-  trackingNumber: string | null
+  /** Per-stage payment settled flag (see backoffice weight update for stage 2, domestic pay for stage 3). */
+  isPaid: boolean
+  tracking_number: string | null
   carrier: string | null
-  shippedAt: string | null
-  deliveredAt: string | null
+  shipped_at: string | null
+  delivered_at: string | null
 }
 
 export interface AuctionPriceLogDto {
   id: number
-  auctionRequestId: number
+  auction_request_id: number
   price: number
-  bidCount: number
-  recordedAt: string
+  bid_count: number
+  recorded_at: string
 }

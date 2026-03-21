@@ -6,6 +6,7 @@
 import { Request, Response } from 'express'
 import { prisma } from '../../../packages/database/src'
 import { createLotSchema, updateLotSchema } from '../../../packages/shared/src'
+import { markIntlThailandStageDeliveredForLot } from '../../services/lot-delivery.service'
 
 export async function listLots(req: Request, res: Response) {
   const page = Math.max(1, parseInt(req.query.page as string) || 1)
@@ -15,7 +16,7 @@ export async function listLots(req: Request, res: Response) {
 
   const where =
     intl_shipping_type && (intl_shipping_type === 'air' || intl_shipping_type === 'sea')
-      ? { intlShippingType: intl_shipping_type }
+      ? { intl_shipping_type: intl_shipping_type }
       : {}
 
   const [data, total] = await Promise.all([
@@ -25,7 +26,7 @@ export async function listLots(req: Request, res: Response) {
       skip,
       take: limit,
       include: {
-        _count: { select: { auctionRequests: true } },
+        _count: { select: { auction_requests: true } },
       },
     }),
     prisma.lot.count({ where }),
@@ -35,14 +36,15 @@ export async function listLots(req: Request, res: Response) {
     success: true,
     data: data.map((l) => ({
       id: l.id,
-      lot_code: l.lotCode,
-      intl_shipping_type: l.intlShippingType,
-      start_lot_at: l.startLotAt?.toISOString() ?? null,
-      end_lot_at: l.endLotAt?.toISOString() ?? null,
-      arrive_at: l.arriveAt?.toISOString() ?? null,
-      auction_count: l._count.auctionRequests,
-      createdAt: l.createdAt.toISOString(),
-      updatedAt: l.updatedAt.toISOString(),
+      lot_code: l.lot_code,
+      intl_shipping_type: l.intl_shipping_type,
+      start_lot_at: l.start_lot_at?.toISOString() ?? null,
+      end_lot_at: l.end_lot_at?.toISOString() ?? null,
+      arrive_at: l.arrive_at?.toISOString() ?? null,
+      is_arrived: l.is_arrived,
+      auction_count: l._count.auction_requests,
+      createdAt: l.created_at.toISOString(),
+      updatedAt: l.updated_at.toISOString(),
     })),
     meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
   })
@@ -57,9 +59,9 @@ export async function createLot(req: Request, res: Response) {
 
   const existing = await prisma.lot.findUnique({
     where: {
-      lotCode_intlShippingType: {
-        lotCode: result.data.lot_code,
-        intlShippingType: result.data.intl_shipping_type,
+      lot_code_intl_shipping_type: {
+        lot_code: result.data.lot_code,
+        intl_shipping_type: result.data.intl_shipping_type,
       },
     },
   })
@@ -70,29 +72,37 @@ export async function createLot(req: Request, res: Response) {
     })
   }
 
-  const lot = await prisma.lot.create({
-    data: {
-      lotCode: result.data.lot_code,
-      intlShippingType: result.data.intl_shipping_type,
-      startLotAt: result.data.start_lot_at ?? null,
-      endLotAt: result.data.end_lot_at ?? null,
-      arriveAt: result.data.arrive_at ?? null,
-    },
+  const lot = await prisma.$transaction(async (tx) => {
+    const created = await tx.lot.create({
+      data: {
+        lot_code: result.data.lot_code,
+        intl_shipping_type: result.data.intl_shipping_type,
+        start_lot_at: result.data.start_lot_at ?? null,
+        end_lot_at: result.data.end_lot_at ?? null,
+        arrive_at: result.data.arrive_at ?? null,
+        is_arrived: result.data.is_arrived ?? false,
+      },
+    })
+    if (created.is_arrived) {
+      await markIntlThailandStageDeliveredForLot(created.id, tx)
+    }
+    return created
   })
 
   return res.status(201).json({
     success: true,
     data: {
       id: lot.id,
-      lot_code: lot.lotCode,
-      intl_shipping_type: lot.intlShippingType,
-      start_lot_at: lot.startLotAt?.toISOString() ?? null,
-      end_lot_at: lot.endLotAt?.toISOString() ?? null,
-      arrive_at: lot.arriveAt?.toISOString() ?? null,
-      createdAt: lot.createdAt.toISOString(),
-      updatedAt: lot.updatedAt.toISOString(),
+      lot_code: lot.lot_code,
+      intl_shipping_type: lot.intl_shipping_type,
+      start_lot_at: lot.start_lot_at?.toISOString() ?? null,
+      end_lot_at: lot.end_lot_at?.toISOString() ?? null,
+      arrive_at: lot.arrive_at?.toISOString() ?? null,
+      is_arrived: lot.is_arrived,
+      createdAt: lot.created_at.toISOString(),
+      updatedAt: lot.updated_at.toISOString(),
     },
-    message: `Lot "${lot.lotCode}" created`,
+    message: `Lot "${lot.lot_code}" created`,
   })
 }
 
@@ -113,17 +123,17 @@ export async function updateLot(req: Request, res: Response) {
     return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Lot not found' } })
   }
 
-  const checkCode = result.data.lot_code ?? existing.lotCode
-  const checkType = result.data.intl_shipping_type ?? existing.intlShippingType
+  const checkCode = result.data.lot_code ?? existing.lot_code
+  const checkType = result.data.intl_shipping_type ?? existing.intl_shipping_type
   if (
-    (result.data.lot_code && result.data.lot_code !== existing.lotCode) ||
-    (result.data.intl_shipping_type && result.data.intl_shipping_type !== existing.intlShippingType)
+    (result.data.lot_code && result.data.lot_code !== existing.lot_code) ||
+    (result.data.intl_shipping_type && result.data.intl_shipping_type !== existing.intl_shipping_type)
   ) {
     const duplicate = await prisma.lot.findUnique({
       where: {
-        lotCode_intlShippingType: {
-          lotCode: checkCode,
-          intlShippingType: checkType,
+        lot_code_intl_shipping_type: {
+          lot_code: checkCode,
+          intl_shipping_type: checkType,
         },
       },
     })
@@ -136,34 +146,43 @@ export async function updateLot(req: Request, res: Response) {
   }
 
   const data: {
-    lotCode?: string
-    intlShippingType?: string
-    startLotAt?: Date | null
-    endLotAt?: Date | null
-    arriveAt?: Date | null
+    lot_code?: string
+    intl_shipping_type?: string
+    start_lot_at?: Date | null
+    end_lot_at?: Date | null
+    arrive_at?: Date | null
+    is_arrived?: boolean
   } = {}
-  if (result.data.lot_code != null) data.lotCode = result.data.lot_code
-  if (result.data.intl_shipping_type != null) data.intlShippingType = result.data.intl_shipping_type
-  if (result.data.start_lot_at !== undefined) data.startLotAt = result.data.start_lot_at ?? null
-  if (result.data.end_lot_at !== undefined) data.endLotAt = result.data.end_lot_at ?? null
-  if (result.data.arrive_at !== undefined) data.arriveAt = result.data.arrive_at ?? null
+  if (result.data.lot_code != null) data.lot_code = result.data.lot_code
+  if (result.data.intl_shipping_type != null) data.intl_shipping_type = result.data.intl_shipping_type
+  if (result.data.start_lot_at !== undefined) data.start_lot_at = result.data.start_lot_at ?? null
+  if (result.data.end_lot_at !== undefined) data.end_lot_at = result.data.end_lot_at ?? null
+  if (result.data.arrive_at !== undefined) data.arrive_at = result.data.arrive_at ?? null
+  if (result.data.is_arrived !== undefined) data.is_arrived = result.data.is_arrived
 
-  const updated = await prisma.lot.update({
-    where: { id },
-    data,
+  const updated = await prisma.$transaction(async (tx) => {
+    const lotRow = await tx.lot.update({
+      where: { id },
+      data,
+    })
+    if (lotRow.is_arrived) {
+      await markIntlThailandStageDeliveredForLot(lotRow.id, tx)
+    }
+    return lotRow
   })
 
   return res.json({
     success: true,
     data: {
       id: updated.id,
-      lot_code: updated.lotCode,
-      intl_shipping_type: updated.intlShippingType,
-      start_lot_at: updated.startLotAt?.toISOString() ?? null,
-      end_lot_at: updated.endLotAt?.toISOString() ?? null,
-      arrive_at: updated.arriveAt?.toISOString() ?? null,
-      createdAt: updated.createdAt.toISOString(),
-      updatedAt: updated.updatedAt.toISOString(),
+      lot_code: updated.lot_code,
+      intl_shipping_type: updated.intl_shipping_type,
+      start_lot_at: updated.start_lot_at?.toISOString() ?? null,
+      end_lot_at: updated.end_lot_at?.toISOString() ?? null,
+      arrive_at: updated.arrive_at?.toISOString() ?? null,
+      is_arrived: updated.is_arrived,
+      createdAt: updated.created_at.toISOString(),
+      updatedAt: updated.updated_at.toISOString(),
     },
     message: 'Lot updated',
   })
