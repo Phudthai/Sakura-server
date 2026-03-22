@@ -12,6 +12,7 @@ import authRoutes from './auth.routes'
 import auctionRoutes from './auction.routes'
 import bidsRoutes from './bids.routes'
 import lotRoutes from './lot.routes'
+import overviewRoutes from './overview.routes'
 import staffRoutes from './staff.routes'
 import customerRoutes from './customer.routes'
 import paymentRoutes from './payment.routes'
@@ -25,6 +26,7 @@ router.use('/auth', authRoutes)
 router.use(auctionRoutes)
 router.use(bidsRoutes)
 router.use(lotRoutes)
+router.use(overviewRoutes)
 router.use(staffRoutes)
 router.use(customerRoutes)
 router.use('/payment-obligations', paymentRoutes)

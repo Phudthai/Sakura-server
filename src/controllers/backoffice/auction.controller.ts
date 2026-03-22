@@ -23,6 +23,74 @@ import {
   getDomesticCustomerStageTypeId,
   getDomesticShippingPendingItemsForUser,
 } from "../../services/domestic-shipping.service";
+import { computeIntlPaymentSnapshot } from "../../services/auction-intl-payment.service";
+
+type AuctionListRow = Awaited<
+  ReturnType<
+    typeof prisma.auctionRequest.findMany<{
+      include: {
+        price_logs: true;
+        user: true;
+        lot: true;
+        delivery_stages: { include: { stage_type: true } };
+      };
+    }>
+  >
+>[number];
+
+function mapAuctionListRow(r: AuctionListRow) {
+  const lastBid = r.price_logs[0];
+  const { user, lot } = r;
+  const stages = r.delivery_stages.map((s) => ({
+    id: s.id,
+    stageTypeCode: s.stage_type.code,
+    stageTypeNameTh: s.stage_type.name_th,
+    status: s.status,
+    isPaid: s.is_paid,
+    trackingNumber: s.tracking_number ?? null,
+    carrier: s.carrier ?? null,
+    shippedAt: s.shipped_at?.toISOString() ?? null,
+    deliveredAt: s.delivered_at?.toISOString() ?? null,
+  }));
+  const isDeliveried =
+    stages.length > 0 && stages.every((s) => s.status === "DELIVERED");
+  return {
+    id: r.id,
+    userId: r.user_id,
+    url: r.url,
+    title: r.title,
+    status: r.status,
+    note: r.note,
+    imageUrl: r.image_url,
+    currentPrice: r.current_price,
+    currentPriceBaht: r.current_price_baht,
+    weightGram: r.weight_gram,
+    intlShippingType: r.intl_shipping_type,
+    lotId: r.lot_id,
+    userCode: user?.user_code ?? null,
+    username: user?.username ?? null,
+    externalId: user?.external_id ?? null,
+    register_url: user?.user_code
+      ? `${process.env.FRONTEND_URL ?? ""}/register?user_code=${user.user_code}`
+      : null,
+    lastBid: lastBid
+      ? { price: lastBid.price, status: lastBid.status }
+      : null,
+    lot: lot
+      ? {
+          id: lot.id,
+          lot_code: lot.lot_code,
+          intl_shipping_type: lot.intl_shipping_type,
+          start_lot_at: lot.start_lot_at?.toISOString() ?? null,
+          end_lot_at: lot.end_lot_at?.toISOString() ?? null,
+          arrive_at: lot.arrive_at?.toISOString() ?? null,
+        }
+      : null,
+    deliveryStages: stages,
+    isDeliveried,
+    endTime: r.end_time?.toISOString() ?? null,
+  };
+}
 
 export async function listAuctionsBackoffice(req: Request, res: Response) {
   const page = Math.max(1, parseInt(req.query.page as string) || 1);
@@ -34,8 +102,33 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
   const delivery_stage = req.query.delivery_stage as string | undefined;
   const shipping_type = req.query.shipping_type as string | undefined;
 
+  const lotIdRaw = req.query.lot_id as string | undefined;
+  const lotIdParsed = lotIdRaw !== undefined ? parseInt(lotIdRaw, 10) : NaN;
+  const lotIdFilter =
+    !Number.isNaN(lotIdParsed) && lotIdParsed > 0
+      ? { lot_id: lotIdParsed }
+      : {};
+
+  const intlOutstanding = req.query.intl_outstanding === "true";
+  const overduePayment = req.query.overdue_payment === "true";
+  const includeUnpaidCustomerCopy =
+    req.query.include_unpaid_customer_copy === "true";
+
+  if (includeUnpaidCustomerCopy && !intlOutstanding && !overduePayment) {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: "INVALID_QUERY",
+        message:
+          "include_unpaid_customer_copy requires intl_outstanding=true and/or overdue_payment=true",
+      },
+    });
+  }
+
   // delivery_stage: 0=type1 PENDING (ยังไม่ถึงบ้านญี่ปุ่น), 1+=type_id DELIVERED
-  let deliveryStageFilter: { delivery_stages: { some: { stage_type_id: number; status: string } } } | object = {};
+  let deliveryStageFilter:
+    | { delivery_stages: { some: { stage_type_id: number; status: string } } }
+    | object = {};
   if (delivery_stage === "0") {
     deliveryStageFilter = {
       delivery_stages: { some: { stage_type_id: 1, status: "PENDING" } },
@@ -44,7 +137,9 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
     const typeId = parseInt(delivery_stage, 10);
     if (!Number.isNaN(typeId) && typeId >= 1) {
       deliveryStageFilter = {
-        delivery_stages: { some: { stage_type_id: typeId, status: "DELIVERED" } },
+        delivery_stages: {
+          some: { stage_type_id: typeId, status: "DELIVERED" },
+        },
       };
     }
   }
@@ -58,83 +153,178 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
       ? { intl_shipping_type: shipping_type }
       : {}),
     ...deliveryStageFilter,
+    ...lotIdFilter,
   };
 
-  const [data, total] = await Promise.all([
-    prisma.auctionRequest.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      skip,
-      take: limit,
-      include: {
-        price_logs: { orderBy: { recorded_at: "desc" }, take: 1 },
-        user: { select: { user_code: true, username: true, external_id: true } },
-        lot: true,
-        delivery_stages: {
-          include: { stage_type: true },
-          orderBy: { stage_type: { sort_order: "asc" } },
-        },
+  const listInclude = {
+    price_logs: { orderBy: { recorded_at: "desc" as const }, take: 1 },
+    user: {
+      select: { user_code: true, username: true, external_id: true },
+    },
+    lot: true,
+    delivery_stages: {
+      include: { stage_type: true },
+      orderBy: { stage_type: { sort_order: "asc" as const } },
+    },
+  };
+
+  const needsIntlFilter = intlOutstanding || overduePayment;
+
+  if (!needsIntlFilter) {
+    const [data, total] = await Promise.all([
+      prisma.auctionRequest.findMany({
+        where,
+        orderBy: { created_at: "desc" },
+        skip,
+        take: limit,
+        include: listInclude,
+      }),
+      prisma.auctionRequest.count({ where }),
+    ]);
+
+    return res.json({
+      success: true,
+      data: data.map(mapAuctionListRow),
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit) || 0,
       },
-    }),
-    prisma.auctionRequest.count({ where }),
-  ]);
+    });
+  }
+
+  const candidates = await prisma.auctionRequest.findMany({
+    where,
+    select: {
+      id: true,
+      user_id: true,
+      current_price_baht: true,
+      weight_gram: true,
+      intl_shipping_type: true,
+      bought_at: true,
+      created_at: true,
+    },
+    orderBy: { created_at: "desc" },
+  });
+
+  const candIds = candidates.map((c) => c.id);
+  const obligations =
+    candIds.length === 0
+      ? []
+      : await prisma.paymentObligation.findMany({
+          where: {
+            auction_request_id: { in: candIds },
+            obligation_type: { code: { in: ["PRODUCT_FULL", "INTL_SHIPPING"] } },
+          },
+          include: {
+            obligation_type: true,
+            transactions: { select: { amount: true } },
+          },
+        });
+
+  const obByAr = new Map<number, typeof obligations>();
+  for (const ob of obligations) {
+    if (ob.auction_request_id) {
+      const list = obByAr.get(ob.auction_request_id) ?? [];
+      list.push(ob);
+      obByAr.set(ob.auction_request_id, list);
+    }
+  }
+
+  const passesIntlFilters = (c: (typeof candidates)[number]): boolean => {
+    if (
+      !c.intl_shipping_type ||
+      (c.intl_shipping_type !== "air" && c.intl_shipping_type !== "sea")
+    ) {
+      return false;
+    }
+    const arObs = obByAr.get(c.id) ?? [];
+    const snap = computeIntlPaymentSnapshot({
+      currentPriceBaht: c.current_price_baht,
+      weightGram: c.weight_gram,
+      intlShippingType: c.intl_shipping_type,
+      boughtAt: c.bought_at,
+      obligations: arObs.map((o) => ({
+        obligation_type: o.obligation_type,
+        amount: o.amount,
+        transactions: o.transactions,
+      })),
+    });
+    if (overduePayment && intlOutstanding) {
+      return snap.isOverdue;
+    }
+    if (overduePayment) {
+      if (!c.bought_at) return false;
+      return snap.isOverdue;
+    }
+    return snap.intlOutstanding;
+  };
+
+  const filtered = candidates.filter(passesIntlFilters);
+  const total = filtered.length;
+  const pageSlice = filtered.slice(skip, skip + limit);
+  const pageIds = pageSlice.map((c) => c.id);
+
+  let unpaidCustomerCopy: string | undefined;
+  if (includeUnpaidCustomerCopy && filtered.length > 0) {
+    const uids = [
+      ...new Set(
+        filtered
+          .map((c) => c.user_id)
+          .filter((id): id is number => id != null),
+      ),
+    ];
+    if (uids.length > 0) {
+      const users = await prisma.user.findMany({
+        where: { id: { in: uids } },
+        select: { user_code: true },
+        orderBy: { user_code: "asc" },
+      });
+      unpaidCustomerCopy = users.map((u) => u.user_code).join(", ");
+    } else {
+      unpaidCustomerCopy = "";
+    }
+  }
+
+  if (pageIds.length === 0) {
+    return res.json({
+      success: true,
+      data: [],
+      meta: {
+        total: 0,
+        page,
+        limit,
+        totalPages: 0,
+        ...(unpaidCustomerCopy !== undefined
+          ? { unpaidCustomerCopy }
+          : {}),
+      },
+    });
+  }
+
+  const data = await prisma.auctionRequest.findMany({
+    where: { id: { in: pageIds } },
+    include: listInclude,
+  });
+  const orderIndex = new Map(pageIds.map((id, i) => [id, i]));
+  data.sort(
+    (a, b) =>
+      (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0),
+  );
 
   return res.json({
     success: true,
-    data: data.map((r) => {
-      const lastBid = r.price_logs[0];
-      const { user, lot } = r;
-      const stages = r.delivery_stages.map((s) => ({
-        id: s.id,
-        stageTypeCode: s.stage_type.code,
-        stageTypeNameTh: s.stage_type.name_th,
-        status: s.status,
-        isPaid: s.is_paid,
-        trackingNumber: s.tracking_number ?? null,
-        carrier: s.carrier ?? null,
-        shippedAt: s.shipped_at?.toISOString() ?? null,
-        deliveredAt: s.delivered_at?.toISOString() ?? null,
-      }));
-      const isDeliveried =
-        stages.length > 0 && stages.every((s) => s.status === "DELIVERED");
-      return {
-        id: r.id,
-        userId: r.user_id,
-        url: r.url,
-        title: r.title,
-        status: r.status,
-        note: r.note,
-        imageUrl: r.image_url,
-        currentPrice: r.current_price,
-        currentPriceBaht: r.current_price_baht,
-        weightGram: r.weight_gram,
-        intlShippingType: r.intl_shipping_type,
-        lotId: r.lot_id,
-        userCode: user?.user_code ?? null,
-        username: user?.username ?? null,
-        externalId: user?.external_id ?? null,
-        register_url: user?.user_code
-          ? `${process.env.FRONTEND_URL ?? ""}/register?user_code=${user.user_code}`
-          : null,
-        lastBid: lastBid
-          ? { price: lastBid.price, status: lastBid.status }
-          : null,
-        lot: lot
-          ? {
-              id: lot.id,
-              lot_code: lot.lot_code,
-              intl_shipping_type: lot.intl_shipping_type,
-              start_lot_at: lot.start_lot_at?.toISOString() ?? null,
-              end_lot_at: lot.end_lot_at?.toISOString() ?? null,
-              arrive_at: lot.arrive_at?.toISOString() ?? null,
-            }
-          : null,
-        deliveryStages: stages,
-        isDeliveried,
-        endTime: r.end_time?.toISOString() ?? null,
-      };
-    }),
-    meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    data: data.map(mapAuctionListRow),
+    meta: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 0,
+      ...(unpaidCustomerCopy !== undefined
+        ? { unpaidCustomerCopy }
+        : {}),
+    },
   });
 }
 
@@ -450,7 +640,8 @@ export async function updateAuctionWeightGram(req: Request, res: Response) {
 
   if (
     !existing.intl_shipping_type ||
-    (existing.intl_shipping_type !== "air" && existing.intl_shipping_type !== "sea")
+    (existing.intl_shipping_type !== "air" &&
+      existing.intl_shipping_type !== "sea")
   ) {
     return res.status(400).json({
       success: false,
@@ -475,8 +666,7 @@ export async function updateAuctionWeightGram(req: Request, res: Response) {
     orderBy: { id: "desc" },
   });
 
-  const intlShippingRate =
-    existing.intl_shipping_type === "air" ? 0.59 : 0.35;
+  const intlShippingRate = existing.intl_shipping_type === "air" ? 0.59 : 0.35;
   const shippingAmount = bahtRoundUp(
     result.data.weight_gram * intlShippingRate,
   );
@@ -606,11 +796,14 @@ export async function updateAuctionWeightGram(req: Request, res: Response) {
 }
 
 export async function updateDomesticShipping(req: Request, res: Response) {
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) {
+  const userId = parseInt(req.params.userId, 10);
+  if (isNaN(userId)) {
     return res.status(400).json({
       success: false,
-      error: { code: "INVALID_ID", message: `Invalid id: "${req.params.id}" is not a number` },
+      error: {
+        code: "INVALID_USER_ID",
+        message: `Invalid userId: "${req.params.userId}" is not a number`,
+      },
     });
   }
 
@@ -622,15 +815,22 @@ export async function updateDomesticShipping(req: Request, res: Response) {
     }));
     return res.status(400).json({
       success: false,
-      error: { code: "VALIDATION_ERROR", message: "Invalid input", details: { errors } },
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Invalid input",
+        details: { errors },
+      },
     });
   }
 
-  const existing = await prisma.auctionRequest.findUnique({ where: { id } });
-  if (!existing) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
     return res.status(404).json({
       success: false,
-      error: { code: "NOT_FOUND", message: `Auction request id ${id} not found` },
+      error: {
+        code: "NOT_FOUND",
+        message: `User id ${userId} not found`,
+      },
     });
   }
 
@@ -640,21 +840,13 @@ export async function updateDomesticShipping(req: Request, res: Response) {
   if (!domesticShippingType) {
     return res.status(500).json({
       success: false,
-      error: { code: "MISSING_TYPE", message: "DOMESTIC_SHIPPING obligation type not found in payment_obligation_types table" },
-    });
-  }
-
-  if (!existing.user_id) {
-    return res.status(400).json({
-      success: false,
       error: {
-        code: "USER_REQUIRED",
-        message: "Auction request must belong to a user to set domestic shipping",
+        code: "MISSING_TYPE",
+        message:
+          "DOMESTIC_SHIPPING obligation type not found in payment_obligation_types table",
       },
     });
   }
-
-  const userId = existing.user_id;
 
   await prisma.$transaction(async (tx) => {
     const existingObligation = await tx.paymentObligation.findFirst({
@@ -681,21 +873,16 @@ export async function updateDomesticShipping(req: Request, res: Response) {
           obligation_type_id: domesticShippingType.id,
           amount: result.data.amount_baht,
           currency: "THB",
-          due_date: existing.bought_at ?? new Date(),
+          due_date: new Date(),
           status: "PENDING",
         },
       });
     }
   });
 
-  await sweepWalletToObligations({
-    userId: userId,
-    sweepKey: `domestic-shipping-${id}-${Date.now()}`,
-  });
-
   return res.json({
     success: true,
-    data: { auctionRequestId: id, amountBaht: result.data.amount_baht, userId },
+    data: { userId, amountBaht: result.data.amount_baht },
     message: "Domestic shipping updated",
   });
 }
@@ -720,14 +907,19 @@ export async function listDomesticShippingQueue(req: Request, res: Response) {
         },
         {
           payment_obligations: {
-            some: { obligation_type: { code: "INTL_SHIPPING" }, status: "PAID" },
+            some: {
+              obligation_type: { code: "INTL_SHIPPING" },
+              status: "PAID",
+            },
           },
         },
       ],
     },
     include: {
       user: { select: { id: true, user_code: true, username: true } },
-      lot: { select: { id: true, lot_code: true, is_arrived: true, arrive_at: true } },
+      lot: {
+        select: { id: true, lot_code: true, is_arrived: true, arrive_at: true },
+      },
     },
   });
 
@@ -804,7 +996,10 @@ export async function listDomesticShippingQueue(req: Request, res: Response) {
  * Drill-down for modal: all auction items for one user that match the same domestic-queue rules
  * as GET /domestic-shipping-queue (lot arrived, product+intl PAID, stage 3 is_paid false).
  */
-export async function getDomesticShippingQueueItems(req: Request, res: Response) {
+export async function getDomesticShippingQueueItems(
+  req: Request,
+  res: Response,
+) {
   const userId = parseInt(req.params.userId, 10);
   if (Number.isNaN(userId)) {
     return res.status(400).json({

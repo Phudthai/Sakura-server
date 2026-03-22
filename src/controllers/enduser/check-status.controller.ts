@@ -6,44 +6,13 @@
 import { Request, Response } from 'express'
 import { prisma } from '../../../packages/database/src'
 import { Prisma } from '@prisma/client'
-import { bahtRoundUp } from '../../../packages/shared/src'
+import { bahtRoundUp, formatLotDisplay } from '../../../packages/shared/src'
 import { getDomesticShippingPendingItemsForUser } from '../../services/domestic-shipping.service'
+import { computeIntlPaymentSnapshot } from '../../services/auction-intl-payment.service'
 
 const BANGKOK_TZ = 'Asia/Bangkok'
-const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000
 const SHIPPING_RATE_AIR = 0.59
 const SHIPPING_RATE_SEA = 0.35
-
-function calcDueDate(boughtAt: Date, transport: 'air' | 'sea'): string {
-  // $queryRaw returns timestamptz stored as +07:00 — the JS Date UTC components
-  // already reflect Bangkok wall-clock time (no conversion needed)
-  const year = boughtAt.getUTCFullYear()
-  const month = boughtAt.getUTCMonth() // 0-indexed
-  const day = boughtAt.getUTCDate()
-
-  let dueYear: number, dueMonth: number, dueDay: number
-  if (transport === 'air') {
-    // 10 calendar days after Bangkok date; Date.UTC handles month/year overflow
-    const d = new Date(Date.UTC(year, month, day + 10))
-    dueYear = d.getUTCFullYear()
-    dueMonth = d.getUTCMonth() + 1 // 1-indexed
-    dueDay = d.getUTCDate()
-  } else {
-    // Sea: 20th of next month (Bangkok calendar)
-    dueYear = month === 11 ? year + 1 : year
-    dueMonth = month === 11 ? 1 : month + 2 // 1-indexed
-    dueDay = 20
-  }
-  return `${dueYear}-${String(dueMonth).padStart(2, '0')}-${String(dueDay).padStart(2, '0')}`
-}
-
-function bangkokToday(): string {
-  const bkk = new Date(Date.now() + BANGKOK_OFFSET_MS)
-  const y = bkk.getUTCFullYear()
-  const m = bkk.getUTCMonth() + 1
-  const d = bkk.getUTCDate()
-  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-}
 
 function mapTransportType(t: string): string | null {
   const s = (t || '').toLowerCase()
@@ -90,9 +59,22 @@ export async function getCheckStatus(req: Request, res: Response) {
   }
 
   const auctionRequests = await prisma.$queryRaw<
-    { id: number; title: string | null; image_url: string | null; current_price: number | null; current_price_baht: number | null; weight_gram: number | null; intl_shipping_type: string | null; lot_code: string | null; bought_at: Date | null }[]
+    {
+      id: number
+      title: string | null
+      image_url: string | null
+      current_price: number | null
+      current_price_baht: number | null
+      weight_gram: number | null
+      intl_shipping_type: string | null
+      lot_code: string | null
+      end_lot_at: Date | null
+      arrive_at: Date | null
+      is_delayed: boolean | null
+      bought_at: Date | null
+    }[]
   >(Prisma.sql`
-    SELECT ar.id, ar.title, ar.image_url, ar.current_price, ar.current_price_baht, ar.weight_gram, ar.intl_shipping_type, l.lot_code, ar.bought_at
+    SELECT ar.id, ar.title, ar.image_url, ar.current_price, ar.current_price_baht, ar.weight_gram, ar.intl_shipping_type, l.lot_code, l.end_lot_at, l.arrive_at, l.is_delayed, ar.bought_at
     FROM auction_requests ar
     LEFT JOIN lots l ON ar.lot_id = l.id
     WHERE ar.user_id = ${userId}
@@ -192,21 +174,29 @@ export async function getCheckStatus(req: Request, res: Response) {
 
   const products = auctionRequests.map((ar) => {
     const arObs = obByAr.get(ar.id) || []
-    const productOb = arObs.find((o) => o.obligation_type.code === 'PRODUCT_FULL')
     const shippingOb = arObs.find((o) => o.obligation_type.code === 'INTL_SHIPPING')
-    const productPaid = productOb ? productOb.transactions.reduce((s, t) => s + t.amount, 0) : 0
-    const shippingPaid = shippingOb ? shippingOb.transactions.reduce((s, t) => s + t.amount, 0) : 0
+    const snap = computeIntlPaymentSnapshot({
+      currentPriceBaht: ar.current_price_baht,
+      weightGram: ar.weight_gram,
+      intlShippingType: ar.intl_shipping_type,
+      boughtAt: ar.bought_at,
+      obligations: arObs.map((o) => ({
+        obligation_type: o.obligation_type,
+        amount: o.amount,
+        transactions: o.transactions,
+      })),
+    })
     const shipShippingCost =
       (ar.weight_gram ?? 0) > 0
         ? bahtRoundUp((ar.weight_gram ?? 0) * shippingRate)
         : (shippingOb?.amount ?? 0)
 
-    const intlTotal = (ar.current_price_baht ?? 0) + shipShippingCost
-    const intlPaid = productPaid + shippingPaid
+    const intlTotal = snap.intlTotal
+    const intlPaid = snap.intlPaid
     const paidForProduct = intlPaid
 
-    const dueDate = ar.bought_at ? calcDueDate(ar.bought_at, transportType as 'air' | 'sea') : null
-    const isOverdue = dueDate ? dueDate < bangkokToday() && intlPaid < intlTotal : false
+    const dueDate = snap.dueDateYmd
+    const isOverdue = snap.isOverdue
 
     const intlFullyPaid = intlPaid >= intlTotal
     const domesticShipping =
@@ -225,6 +215,12 @@ export async function getCheckStatus(req: Request, res: Response) {
       shipShippingCost,
       paid: paidForProduct,
       shipRound: ar.lot_code ?? null,
+      lotDisplay: formatLotDisplay({
+        lotCode: ar.lot_code,
+        endLotAt: ar.end_lot_at,
+        arriveAt: ar.arrive_at,
+        isDelayed: ar.is_delayed === true,
+      }),
       arrivedAtJapan: arrivedAtJapanArIds.has(ar.id),
       dueDate: dueDate ?? null,
       isOverdue,

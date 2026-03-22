@@ -63,6 +63,7 @@ model Lot {
   end_lot_at       DateTime? @map("end_lot_at")
   arrive_at        DateTime? @map("arrive_at")
   is_arrived       Boolean   @default(false) @map("is_arrived")
+  is_delayed       Boolean   @default(false) @map("is_delayed")
   created_at       DateTime  @default(now()) @map("created_at")
   updated_at       DateTime  @updatedAt @map("updated_at")
 

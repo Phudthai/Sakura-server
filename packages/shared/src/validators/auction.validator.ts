@@ -76,6 +76,8 @@ export const createLotSchema = z.object({
   arrive_at: z.coerce.date().nullable().optional(),
   /** Confirms lot actually arrived in Thailand (independent of planned arrive_at). */
   is_arrived: z.boolean().optional(),
+  /** Manual flag for end-user lot label (ล่าช้า** prefix). */
+  is_delayed: z.boolean().optional(),
 });
 
 export const updateLotSchema = z.object({
@@ -85,6 +87,7 @@ export const updateLotSchema = z.object({
   end_lot_at: z.coerce.date().nullable().optional(),
   arrive_at: z.coerce.date().nullable().optional(),
   is_arrived: z.boolean().optional(),
+  is_delayed: z.boolean().optional(),
 });
 
 export const assignLotToAuctionSchema = z.object({

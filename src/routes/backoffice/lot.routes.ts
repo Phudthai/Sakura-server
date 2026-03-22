@@ -9,6 +9,11 @@ import * as lotController from '../../controllers/backoffice/lot.controller'
 
 const router = Router()
 
+router.get(
+  '/lots/grouped-by-shipping-type',
+  requireAuth(['ADMIN', 'STAFF']),
+  lotController.listLotsGroupedByShippingType,
+)
 router.get('/lots', requireAuth(['ADMIN', 'STAFF']), lotController.listLots)
 router.post('/lots', requireAuth(['ADMIN', 'STAFF']), lotController.createLot)
 router.patch('/lots/:id', requireAuth(['ADMIN', 'STAFF']), lotController.updateLot)

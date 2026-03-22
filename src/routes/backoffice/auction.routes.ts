@@ -11,6 +11,11 @@ import * as bidsController from '../../controllers/backoffice/bids.controller'
 const router = Router()
 
 router.get('/domestic-shipping-queue', requireAuth(['ADMIN', 'STAFF']), auctionController.listDomesticShippingQueue)
+router.patch(
+  '/domestic-shipping-queue/:userId',
+  requireAuth(['ADMIN', 'STAFF']),
+  auctionController.updateDomesticShipping,
+)
 router.get(
   '/domestic-shipping-queue/:userId/items',
   requireAuth(['ADMIN', 'STAFF']),
@@ -22,7 +27,6 @@ router.post('/auction-requests/:id/bids', requireAuth(['ADMIN', 'STAFF']), bidsC
 router.patch('/auction-requests/:id/note', requireAuth(['ADMIN', 'STAFF']), auctionController.updateAuctionNote)
 router.patch('/auction-requests/:id/lot', requireAuth(['ADMIN', 'STAFF']), auctionController.assignLotToAuction)
 router.patch('/auction-requests/:id/weight-gram', requireAuth(['ADMIN', 'STAFF']), auctionController.updateAuctionWeightGram)
-router.patch('/auction-requests/:id/domestic-shipping', requireAuth(['ADMIN', 'STAFF']), auctionController.updateDomesticShipping)
 router.patch('/auction-requests/:id', requireAuth(['ADMIN', 'STAFF']), auctionController.updateAuctionStatus)
 
 export default router
