@@ -5,7 +5,7 @@
  *
  * เงินบาท: ถ้ามีทศนิยมปัดขึ้นทั้งหมด (เช่น 1000.1 → 1001)
  *
- * Production conversion uses `jpyToBaht` from `src/services/exchange-rate.service.ts` (DB tiers).
+ * Production conversion uses `jpyToBaht` from `src/services/exchange-rate.service.ts` (DB tiers per air/sea).
  */
 
 /** Legacy default when tiers not loaded: 0.265 if JPY &lt; 1200 else 0.26 — same as original hardcoded behavior */

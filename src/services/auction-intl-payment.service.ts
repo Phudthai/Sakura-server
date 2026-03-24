@@ -7,9 +7,7 @@ import {
   bangkokTodayYmd,
   calcIntlDueDateYmd,
 } from "../../packages/shared/src"
-
-export const SHIPPING_RATE_AIR = 0.59
-export const SHIPPING_RATE_SEA = 0.35
+import { getBahtPerGram } from "./intl-shipping-gram-rate.service"
 
 export type ObligationLite = {
   obligation_type: { code: string }
@@ -40,8 +38,7 @@ export function computeIntlPaymentSnapshot(params: {
   const productPaid = productOb ? productOb.transactions.reduce((s, t) => s + t.amount, 0) : 0
   const shippingPaid = shippingOb ? shippingOb.transactions.reduce((s, t) => s + t.amount, 0) : 0
 
-  const shippingRate =
-    transport === "air" ? SHIPPING_RATE_AIR : transport === "sea" ? SHIPPING_RATE_SEA : SHIPPING_RATE_AIR
+  const shippingRate = getBahtPerGram(transport)
   const shipShippingCost =
     (params.weightGram ?? 0) > 0
       ? bahtRoundUp((params.weightGram ?? 0) * shippingRate)
@@ -91,8 +88,7 @@ export function computeProductIntlShippingBreakdown(params: {
   const productPaid = productOb ? productOb.transactions.reduce((s, t) => s + t.amount, 0) : 0
   const shippingPaid = shippingOb ? shippingOb.transactions.reduce((s, t) => s + t.amount, 0) : 0
 
-  const shippingRate =
-    transport === "air" ? SHIPPING_RATE_AIR : transport === "sea" ? SHIPPING_RATE_SEA : SHIPPING_RATE_AIR
+  const shippingRate = getBahtPerGram(transport)
   const intlShippingTotalBaht =
     (params.weightGram ?? 0) > 0
       ? bahtRoundUp((params.weightGram ?? 0) * shippingRate)

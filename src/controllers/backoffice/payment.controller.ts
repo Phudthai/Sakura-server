@@ -8,10 +8,13 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '../../../packages/database/src'
 import * as walletService from '../../services/wallet.service'
 import { markUserDomesticStage3Paid } from '../../services/domestic-shipping.service'
-import { PAYMENT_RECEIPT_PURPOSE_DOMESTIC } from '../../../packages/shared/src'
+import {
+  PAYMENT_RECEIPT_PURPOSE_DOMESTIC,
+  PAYMENT_RECEIPT_PURPOSE_WALLET_TOPUP,
+} from '../../../packages/shared/src'
 
 const BANGKOK_TZ = 'Asia/Bangkok'
-/** Monthly slip: product + intl only (domestic uses separate slip purpose). */
+/** Monthly slip: product + intl only (domestic / wallet top-up use separate slip purpose). */
 const OBLIGATION_TYPES_MONTHLY_SLIP = ['PRODUCT_FULL', 'INTL_SHIPPING']
 const OBLIGATION_TYPE_OVERPAYMENT = 'OVERPAYMENT_TO_WALLET'
 
@@ -123,6 +126,36 @@ export async function approveSlip(req: Request, res: Response) {
       })
     }
     obligations = [domesticOb]
+  } else if (receiptPurpose === PAYMENT_RECEIPT_PURPOSE_WALLET_TOPUP) {
+    const walletTopupType = await prisma.paymentObligationType.findUnique({
+      where: { code: 'WALLET_TOPUP' },
+    })
+    if (!walletTopupType) {
+      return res.status(500).json({ success: false, error: { code: 'MISSING_TYPE', message: 'WALLET_TOPUP obligation type missing' } })
+    }
+    const walletTopupObs = await prisma.paymentObligation.findMany({
+      where: {
+        user_id: userId,
+        obligation_type_id: walletTopupType.id,
+        status: 'PENDING',
+      },
+      orderBy: { id: 'asc' },
+      include: {
+        obligation_type: true,
+        auction_request: { include: { lot: true } },
+        transactions: { select: { amount: true } },
+      },
+    })
+    if (walletTopupObs.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'NO_PENDING_WALLET_TOPUP',
+          message: 'No pending wallet top-up obligation for this user.',
+        },
+      })
+    }
+    obligations = walletTopupObs
   } else {
     const typeIds = await prisma.paymentObligationType.findMany({
       where: { code: { in: OBLIGATION_TYPES_MONTHLY_SLIP } },
@@ -235,6 +268,36 @@ export async function approveSlip(req: Request, res: Response) {
     return res.status(500).json({ success: false, error: { code: 'MISSING_TYPE', message: 'OVERPAYMENT_TO_WALLET obligation type not found' } })
   }
 
+  /** Slip-upload creates WALLET_TOPUP with amount 0; staff amount fills the remainder after other pending top-ups. */
+  if (receiptPurpose === PAYMENT_RECEIPT_PURPOSE_WALLET_TOPUP) {
+    const zeros = obligations.filter((o) => o.obligation_type.code === 'WALLET_TOPUP' && o.amount === 0)
+    if (zeros.length > 1) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'AMBIGUOUS_WALLET_TOPUP',
+          message: 'Multiple zero-amount wallet top-up obligations; resolve in backoffice before approving.',
+        },
+      })
+    }
+    if (zeros.length === 1) {
+      const z = zeros[0]
+      let rem = amount
+      for (const o of obligations) {
+        if (o.id === z.id) continue
+        const paidSoFar = o.transactions.reduce((s, t) => s + t.amount, 0)
+        const stillDue = Math.max(0, o.amount - paidSoFar)
+        rem -= Math.min(rem, stillDue)
+      }
+      if (rem < 0) rem = 0
+      await prisma.paymentObligation.update({
+        where: { id: z.id },
+        data: { amount: rem },
+      })
+      z.amount = rem
+    }
+  }
+
   const allocations: { obligationId: number; amount: number }[] = []
   let remaining = amount
 
@@ -254,6 +317,8 @@ export async function approveSlip(req: Request, res: Response) {
       data: { amount, status: 'CONFIRMED', paid_at: paidAt },
     })
 
+    let walletTopupCredited = 0
+
     for (const { obligationId, amount: allocAmount } of allocations) {
       await db.paymentTransaction.create({
         data: {
@@ -270,6 +335,19 @@ export async function approveSlip(req: Request, res: Response) {
         include: { transactions: true, obligation_type: true },
       })
       const totalPaid = ob.transactions.reduce((s, t) => s + t.amount, 0)
+
+      if (ob.obligation_type.code === 'WALLET_TOPUP' && userId) {
+        await walletService.creditWalletWithTx(db, {
+          userId,
+          amount: allocAmount,
+          type: walletService.WALLET_TX_TYPES.TOPUP,
+          referenceType: 'PaymentReceipt',
+          referenceId: receiptId,
+          idempotencyKey: `slip-topup-${receiptId}-ob-${obligationId}`,
+        })
+        walletTopupCredited += allocAmount
+      }
+
       if (totalPaid >= ob.amount) {
         await db.paymentObligation.update({
           where: { id: obligationId },
@@ -310,9 +388,19 @@ export async function approveSlip(req: Request, res: Response) {
         referenceId: receiptId,
         idempotencyKey: `receipt-overpay-${receiptId}`,
       })
-      return { allocations, overpaymentAmount: remaining, overpaymentObligationId: overpayOb.id }
+      return {
+        allocations,
+        overpaymentAmount: remaining,
+        overpaymentObligationId: overpayOb.id,
+        walletTopupCredited,
+      }
     }
-    return { allocations, overpaymentAmount: 0, overpaymentObligationId: null as number | null }
+    return {
+      allocations,
+      overpaymentAmount: 0,
+      overpaymentObligationId: null as number | null,
+      walletTopupCredited,
+    }
   })
 
   if (userId) {
@@ -322,7 +410,7 @@ export async function approveSlip(req: Request, res: Response) {
     })
   }
 
-  const walletCredited = result.overpaymentAmount > 0
+  const walletCredited = result.overpaymentAmount > 0 || result.walletTopupCredited > 0
 
   return res.json({
     success: true,
@@ -332,6 +420,7 @@ export async function approveSlip(req: Request, res: Response) {
       allocations: result.allocations,
       overpaymentAmount: result.overpaymentAmount,
       overpaymentObligationId: result.overpaymentObligationId,
+      walletTopupCredited: result.walletTopupCredited,
       walletCredited,
       status: 'CONFIRMED',
     },

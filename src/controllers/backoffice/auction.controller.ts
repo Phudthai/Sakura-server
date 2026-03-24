@@ -16,6 +16,7 @@ import {
   bahtRoundUp,
 } from "../../../packages/shared/src";
 import { jpyToBaht } from "../../services/exchange-rate.service";
+import { getBahtPerGram } from "../../services/intl-shipping-gram-rate.service";
 import { scrapeYahooAuction } from "../../services/auction-scraper.service";
 import { ensureNextLotExists } from "../../services/lot.service";
 import { sweepWalletToObligations } from "../../services/wallet.service";
@@ -73,9 +74,7 @@ function mapAuctionListRow(r: AuctionListRow) {
     register_url: user?.user_code
       ? `${process.env.FRONTEND_URL ?? ""}/register?user_code=${user.user_code}`
       : null,
-    lastBid: lastBid
-      ? { price: lastBid.price, status: lastBid.status }
-      : null,
+    lastBid: lastBid ? { price: lastBid.price, status: lastBid.status } : null,
     lot: lot
       ? {
           id: lot.id,
@@ -215,7 +214,9 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
       : await prisma.paymentObligation.findMany({
           where: {
             auction_request_id: { in: candIds },
-            obligation_type: { code: { in: ["PRODUCT_FULL", "INTL_SHIPPING"] } },
+            obligation_type: {
+              code: { in: ["PRODUCT_FULL", "INTL_SHIPPING"] },
+            },
           },
           include: {
             obligation_type: true,
@@ -270,9 +271,7 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
   if (includeUnpaidCustomerCopy && filtered.length > 0) {
     const uids = [
       ...new Set(
-        filtered
-          .map((c) => c.user_id)
-          .filter((id): id is number => id != null),
+        filtered.map((c) => c.user_id).filter((id): id is number => id != null),
       ),
     ];
     if (uids.length > 0) {
@@ -296,9 +295,7 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
         page,
         limit,
         totalPages: 0,
-        ...(unpaidCustomerCopy !== undefined
-          ? { unpaidCustomerCopy }
-          : {}),
+        ...(unpaidCustomerCopy !== undefined ? { unpaidCustomerCopy } : {}),
       },
     });
   }
@@ -309,8 +306,7 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
   });
   const orderIndex = new Map(pageIds.map((id, i) => [id, i]));
   data.sort(
-    (a, b) =>
-      (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0),
+    (a, b) => (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0),
   );
 
   return res.json({
@@ -321,9 +317,7 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
       page,
       limit,
       totalPages: Math.ceil(total / limit) || 0,
-      ...(unpaidCustomerCopy !== undefined
-        ? { unpaidCustomerCopy }
-        : {}),
+      ...(unpaidCustomerCopy !== undefined ? { unpaidCustomerCopy } : {}),
     },
   });
 }
@@ -666,7 +660,7 @@ export async function updateAuctionWeightGram(req: Request, res: Response) {
     orderBy: { id: "desc" },
   });
 
-  const intlShippingRate = existing.intl_shipping_type === "air" ? 0.59 : 0.35;
+  const intlShippingRate = getBahtPerGram(existing.intl_shipping_type);
   const shippingAmount = bahtRoundUp(
     result.data.weight_gram * intlShippingRate,
   );

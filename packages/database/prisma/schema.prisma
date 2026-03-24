@@ -163,6 +163,16 @@ model JpyThbRateTier {
   @@map("jpy_thb_rate_tiers")
 }
 
+// เรทค่าขนส่งระหว่างประเทศ: บาทต่อกรัม (เดิม hardcode air 0.59 / sea 0.35)
+model IntlShippingGramRate {
+  id                 Int      @id @default(autoincrement())
+  intl_shipping_type String   @unique @map("intl_shipping_type")
+  baht_per_gram      Decimal  @map("baht_per_gram") @db.Decimal(10, 6)
+  updated_at         DateTime @updatedAt @map("updated_at")
+
+  @@map("intl_shipping_gram_rates")
+}
+
 // ==============================================
 // User Wallet
 // ==============================================
@@ -216,7 +226,7 @@ model PaymentReceipt {
   month            Int?
   year             Int?
   transport_type   String?   @map("transport_type")
-  // null = monthly intl slip; DOMESTIC_SHIPPING = domestic fee only
+  // null = monthly intl slip; DOMESTIC_SHIPPING = domestic; WALLET_TOPUP = wallet top-up slip
   purpose          String?   @map("purpose")
   created_at       DateTime  @default(now()) @map("created_at")
   updated_at       DateTime  @updatedAt @map("updated_at")

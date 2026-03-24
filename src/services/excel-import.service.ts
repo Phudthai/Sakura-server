@@ -243,7 +243,9 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
           }
 
           if (obligationTypeId != null && parsed.shippingAmount != null && parsed.shippingAmount > 0) {
-            const shippingBaht = bahtRoundUp(jpyToBaht(parsed.shippingAmount)!)
+            const shippingBaht = bahtRoundUp(
+              jpyToBaht(parsed.shippingAmount)!,
+            )
             await prisma.paymentObligation.create({
               data: {
                 auction_request_id: auctionRequest.id,

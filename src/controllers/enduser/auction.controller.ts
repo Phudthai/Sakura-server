@@ -283,7 +283,10 @@ export async function mockAuction(req: Request, res: Response) {
 
     await prisma.auctionRequest.update({
       where: { id },
-      data: { current_price: newPrice, current_price_baht: jpyToBaht(newPrice) },
+      data: {
+        current_price: newPrice,
+        current_price_baht: jpyToBaht(newPrice),
+      },
     })
 
     return res.json({

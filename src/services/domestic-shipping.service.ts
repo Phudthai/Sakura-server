@@ -2,57 +2,58 @@
  * User-level DOMESTIC_SHIPPING obligations and delivery stage 3 is_paid flags.
  */
 
-import type { Prisma } from '@prisma/client'
-import { prisma } from '../../packages/database/src'
+import type { Prisma } from "@prisma/client";
+import { prisma } from "../../packages/database/src";
 
-type Db = Prisma.TransactionClient | typeof prisma
+type Db = Prisma.TransactionClient | typeof prisma;
 
-const STAGE_DOMESTIC_CODE = 'STAGE_3_DOMESTIC_CUSTOMER'
+const STAGE_DOMESTIC_CODE = "STAGE_3_DOMESTIC_CUSTOMER";
 
-let cachedDomesticStageTypeId: number | null = null
+let cachedDomesticStageTypeId: number | null = null;
 
 export async function getDomesticCustomerStageTypeId(): Promise<number> {
-  if (cachedDomesticStageTypeId != null) return cachedDomesticStageTypeId
+  if (cachedDomesticStageTypeId != null) return cachedDomesticStageTypeId;
   const row = await prisma.deliveryStageType.findUnique({
     where: { code: STAGE_DOMESTIC_CODE },
     select: { id: true },
-  })
-  if (!row) throw new Error(`delivery_stage_types missing ${STAGE_DOMESTIC_CODE}`)
-  cachedDomesticStageTypeId = row.id
-  return row.id
+  });
+  if (!row)
+    throw new Error(`delivery_stage_types missing ${STAGE_DOMESTIC_CODE}`);
+  cachedDomesticStageTypeId = row.id;
+  return row.id;
 }
 
 export type DomesticPendingItemPayload = {
-  pendingDomesticItemCount: number
-  domesticPendingBaht: number | null
+  pendingDomesticItemCount: number;
+  domesticPendingBaht: number | null;
   items: Array<{
-    id: number
-    title: string | null
-    imageUrl: string | null
-    status: string
-    bidResult: string | null
-    weightGram: number | null
-    currentPriceBaht: number | null
-    boughtAt: string | null
+    id: number;
+    title: string | null;
+    imageUrl: string | null;
+    status: string;
+    bidResult: string | null;
+    weightGram: number | null;
+    currentPriceBaht: number | null;
+    boughtAt: string | null;
     lot: {
-      id: number
-      lotCode: string | null
-      isArrived: boolean
-      arriveAt: string | null
-    } | null
+      id: number;
+      lotCode: string | null;
+      isArrived: boolean;
+      arriveAt: string | null;
+    } | null;
     deliveryStages: Array<{
-      id: number
-      stageTypeCode: string
-      stageTypeNameTh: string | null
-      status: string
-      isPaid: boolean
-      trackingNumber: string | null
-      carrier: string | null
-      shippedAt: string | null
-      deliveredAt: string | null
-    }>
-  }>
-}
+      id: number;
+      stageTypeCode: string;
+      stageTypeNameTh: string | null;
+      status: string;
+      isPaid: boolean;
+      trackingNumber: string | null;
+      carrier: string | null;
+      shippedAt: string | null;
+      deliveredAt: string | null;
+    }>;
+  }>;
+};
 
 /**
  * Same rules as backoffice domestic shipping queue: lot arrived, PRODUCT_FULL + INTL_SHIPPING PAID,
@@ -61,7 +62,7 @@ export type DomesticPendingItemPayload = {
 export async function getDomesticShippingPendingItemsForUser(
   userId: number,
 ): Promise<DomesticPendingItemPayload> {
-  const stageTypeId = await getDomesticCustomerStageTypeId()
+  const stageTypeId = await getDomesticCustomerStageTypeId();
 
   const rows = await prisma.auctionRequest.findMany({
     where: {
@@ -74,12 +75,15 @@ export async function getDomesticShippingPendingItemsForUser(
       AND: [
         {
           payment_obligations: {
-            some: { obligation_type: { code: 'PRODUCT_FULL' }, status: 'PAID' },
+            some: { obligation_type: { code: "PRODUCT_FULL" }, status: "PAID" },
           },
         },
         {
           payment_obligations: {
-            some: { obligation_type: { code: 'INTL_SHIPPING' }, status: 'PAID' },
+            some: {
+              obligation_type: { code: "INTL_SHIPPING" },
+              status: "PAID",
+            },
           },
         },
       ],
@@ -95,25 +99,25 @@ export async function getDomesticShippingPendingItemsForUser(
       },
       delivery_stages: {
         include: { stage_type: true },
-        orderBy: { stage_type: { sort_order: 'asc' } },
+        orderBy: { stage_type: { sort_order: "asc" } },
       },
     },
-    orderBy: [{ bought_at: 'asc' }, { id: 'asc' }],
-  })
+    orderBy: [{ bought_at: "asc" }, { id: "asc" }],
+  });
 
   const domesticType = await prisma.paymentObligationType.findUnique({
-    where: { code: 'DOMESTIC_SHIPPING' },
-  })
+    where: { code: "DOMESTIC_SHIPPING" },
+  });
   const domesticOb =
     domesticType != null
       ? await prisma.paymentObligation.findFirst({
           where: {
             user_id: userId,
             obligation_type_id: domesticType.id,
-            status: 'PENDING',
+            status: "PENDING",
           },
         })
-      : null
+      : null;
 
   const items = rows.map((r) => {
     const stages = r.delivery_stages.map((s) => ({
@@ -126,7 +130,7 @@ export async function getDomesticShippingPendingItemsForUser(
       carrier: s.carrier ?? null,
       shippedAt: s.shipped_at?.toISOString() ?? null,
       deliveredAt: s.delivered_at?.toISOString() ?? null,
-    }))
+    }));
     return {
       id: r.id,
       title: r.title,
@@ -145,23 +149,26 @@ export async function getDomesticShippingPendingItemsForUser(
           }
         : null,
       deliveryStages: stages,
-    }
-  })
+    };
+  });
 
   return {
     pendingDomesticItemCount: items.length,
     domesticPendingBaht: domesticOb?.amount ?? null,
     items,
-  }
+  };
 }
 
 /**
  * After the user-level domestic shipping obligation is fully paid, mark stage 3 is_paid on all
  * auction items for this user that were still waiting on domestic payment.
  */
-export async function markUserDomesticStage3Paid(userId: number, tx?: Db): Promise<void> {
-  const db = tx ?? prisma
-  const stageTypeId = await getDomesticCustomerStageTypeId()
+export async function markUserDomesticStage3Paid(
+  userId: number,
+  tx?: Db,
+): Promise<void> {
+  const db = tx ?? prisma;
+  const stageTypeId = await getDomesticCustomerStageTypeId();
   await db.deliveryStage.updateMany({
     where: {
       stage_type_id: stageTypeId,
@@ -169,5 +176,5 @@ export async function markUserDomesticStage3Paid(userId: number, tx?: Db): Promi
       auction_request: { user_id: userId },
     },
     data: { is_paid: true },
-  })
+  });
 }

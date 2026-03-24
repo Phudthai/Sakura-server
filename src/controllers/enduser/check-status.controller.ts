@@ -9,10 +9,9 @@ import { Prisma } from '@prisma/client'
 import { bahtRoundUp, formatLotDisplay } from '../../../packages/shared/src'
 import { getDomesticShippingPendingItemsForUser } from '../../services/domestic-shipping.service'
 import { computeIntlPaymentSnapshot } from '../../services/auction-intl-payment.service'
+import { getBahtPerGram } from '../../services/intl-shipping-gram-rate.service'
 
 const BANGKOK_TZ = 'Asia/Bangkok'
-const SHIPPING_RATE_AIR = 0.59
-const SHIPPING_RATE_SEA = 0.35
 
 function mapTransportType(t: string): string | null {
   const s = (t || '').toLowerCase()
@@ -170,7 +169,7 @@ export async function getCheckStatus(req: Request, res: Response) {
     ).map((s) => s.auction_request_id),
   )
 
-  const shippingRate = transportType === 'air' ? SHIPPING_RATE_AIR : SHIPPING_RATE_SEA
+  const shippingRate = getBahtPerGram(transportType)
 
   const products = auctionRequests.map((ar) => {
     const arObs = obByAr.get(ar.id) || []

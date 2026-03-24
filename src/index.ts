@@ -17,6 +17,7 @@ import * as backoffice from "./routes/backoffice";
 import { startAuctionCron } from "./jobs/auction-cron.job";
 import { startLotCron } from "./jobs/lot-cron.job";
 import { reloadJpyThbTiers } from "./services/exchange-rate.service";
+import { reloadIntlShippingGramRates } from "./services/intl-shipping-gram-rate.service";
 
 const app = express();
 const PORT = process.env.PORT || process.env.API_PORT || 4000;
@@ -73,6 +74,8 @@ async function start() {
 
   await reloadJpyThbTiers();
   console.log("JPY→THB tiers loaded");
+  await reloadIntlShippingGramRates();
+  console.log("Intl shipping gram rates loaded");
 
   app.listen(PORT, () => {
     console.log(`🚀 API server running on http://localhost:${PORT}`);

@@ -16,8 +16,15 @@ export const putJpyThbTiersBodySchema = z.object({
   tiers: z.array(jpyThbTierInputSchema).min(1),
 })
 
+/** Backoffice: บาทต่อกรัมค่าขนส่งระหว่างประเทศ (air / sea) */
+export const putShippingGramRatesBodySchema = z.object({
+  air: z.object({ bahtPerGram: z.number().positive() }),
+  sea: z.object({ bahtPerGram: z.number().positive() }),
+})
+
 export type JpyThbTierInput = z.infer<typeof jpyThbTierInputSchema>
 export type PutJpyThbTiersBody = z.infer<typeof putJpyThbTiersBodySchema>
+export type PutShippingGramRatesBody = z.infer<typeof putShippingGramRatesBodySchema>
 
 /**
  * Validates contiguous half-open partition [0, ∞): first min=0, only last max=null, each max=next min.
