@@ -5,7 +5,7 @@
  */
 
 import { prisma } from '../../packages/database/src'
-import { markUserDomesticStage3Paid } from './domestic-shipping.service'
+import { completeDomesticShipmentAndMarkStage3Paid } from './domestic-shipping.service'
 
 type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
 
@@ -393,7 +393,12 @@ export async function payObligationFromWallet(params: {
     })
 
     if (obligation.obligation_type.code === 'DOMESTIC_SHIPPING') {
-      await markUserDomesticStage3Paid(userId, tx)
+      await completeDomesticShipmentAndMarkStage3Paid({
+        userId,
+        receiptId: null,
+        shippingAddressId: null,
+        tx,
+      })
     }
 
     const updatedWallet = await tx.userWallet.findUniqueOrThrow({ where: { id: wallet.id } })

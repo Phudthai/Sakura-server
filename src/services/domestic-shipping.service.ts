@@ -1,5 +1,5 @@
 /**
- * User-level DOMESTIC_SHIPPING obligations and delivery stage 3 is_paid flags.
+ * User-level DOMESTIC_SHIPPING obligations, domestic shipment batches, and delivery stage 3 is_paid flags.
  */
 
 import type { Prisma } from "@prisma/client";
@@ -21,6 +21,52 @@ export async function getDomesticCustomerStageTypeId(): Promise<number> {
     throw new Error(`delivery_stage_types missing ${STAGE_DOMESTIC_CODE}`);
   cachedDomesticStageTypeId = row.id;
   return row.id;
+}
+
+/**
+ * Same filters as GET /check-status/domestic-pending-items (getDomesticShippingPendingItemsForUser).
+ */
+export function buildDomesticPendingAuctionWhere(
+  userId: number,
+  stageTypeId: number,
+): Prisma.AuctionRequestWhereInput {
+  return {
+    user_id: userId,
+    lot_id: { not: null },
+    lot: { is_arrived: true },
+    domestic_shipment_id: null,
+    domestic_shipment_item: null,
+    delivery_stages: {
+      some: { stage_type_id: stageTypeId, is_paid: false },
+    },
+    AND: [
+      {
+        payment_obligations: {
+          some: { obligation_type: { code: "PRODUCT_FULL" }, status: "PAID" },
+        },
+      },
+      {
+        payment_obligations: {
+          some: {
+            obligation_type: { code: "INTL_SHIPPING" },
+            status: "PAID",
+          },
+        },
+      },
+    ],
+  };
+}
+
+export async function getDomesticPendingAuctionRequestIds(
+  userId: number,
+  db: Db = prisma,
+): Promise<number[]> {
+  const stageTypeId = await getDomesticCustomerStageTypeId();
+  const rows = await db.auctionRequest.findMany({
+    where: buildDomesticPendingAuctionWhere(userId, stageTypeId),
+    select: { id: true },
+  });
+  return [...new Set(rows.map((r) => r.id))];
 }
 
 export type DomesticPendingItemPayload = {
@@ -65,29 +111,7 @@ export async function getDomesticShippingPendingItemsForUser(
   const stageTypeId = await getDomesticCustomerStageTypeId();
 
   const rows = await prisma.auctionRequest.findMany({
-    where: {
-      user_id: userId,
-      lot_id: { not: null },
-      lot: { is_arrived: true },
-      delivery_stages: {
-        some: { stage_type_id: stageTypeId, is_paid: false },
-      },
-      AND: [
-        {
-          payment_obligations: {
-            some: { obligation_type: { code: "PRODUCT_FULL" }, status: "PAID" },
-          },
-        },
-        {
-          payment_obligations: {
-            some: {
-              obligation_type: { code: "INTL_SHIPPING" },
-              status: "PAID",
-            },
-          },
-        },
-      ],
-    },
+    where: buildDomesticPendingAuctionWhere(userId, stageTypeId),
     include: {
       lot: {
         select: {
@@ -160,20 +184,108 @@ export async function getDomesticShippingPendingItemsForUser(
 }
 
 /**
- * After the user-level domestic shipping obligation is fully paid, mark stage 3 is_paid on all
- * auction items for this user that were still waiting on domestic payment.
+ * After DOMESTIC_SHIPPING is paid: create domestic_shipments + items for the same auction rows as
+ * domestic-pending-items, set auction_requests.domestic_shipment_id, then mark stage 3 paid only for those rows.
+ * `receiptId` null = paid via wallet (no slip row).
  */
-export async function markUserDomesticStage3Paid(
-  userId: number,
-  tx?: Db,
-): Promise<void> {
-  const db = tx ?? prisma;
+export async function completeDomesticShipmentAndMarkStage3Paid(params: {
+  userId: number;
+  receiptId: number | null;
+  shippingAddressId: number | null;
+  tx: Db;
+}): Promise<void> {
+  const { userId, receiptId, shippingAddressId, tx } = params;
+
+  if (receiptId != null) {
+    const existing = await tx.domesticShipment.findUnique({
+      where: { payment_receipt_id: receiptId },
+    });
+    if (existing) return;
+  }
+
   const stageTypeId = await getDomesticCustomerStageTypeId();
-  await db.deliveryStage.updateMany({
+  let auctionIds = await getDomesticPendingAuctionRequestIds(userId, tx);
+  if (auctionIds.length === 0) {
+    return;
+  }
+
+  const alreadyLinked = await tx.domesticShipmentItem.findMany({
+    where: { auction_request_id: { in: auctionIds } },
+    select: { auction_request_id: true },
+  });
+  const linkedSet = new Set(alreadyLinked.map((r) => r.auction_request_id));
+  auctionIds = auctionIds.filter((id) => !linkedSet.has(id));
+  if (auctionIds.length === 0) {
+    return;
+  }
+
+  let snapshot: {
+    snapshot_recipient_name: string | null;
+    snapshot_phone: string | null;
+    snapshot_address_line1: string | null;
+    snapshot_address_line2: string | null;
+    snapshot_subdistrict: string | null;
+    snapshot_district: string | null;
+    snapshot_province: string | null;
+    snapshot_postal_code: string | null;
+    snapshot_country: string | null;
+  } = {
+    snapshot_recipient_name: null,
+    snapshot_phone: null,
+    snapshot_address_line1: null,
+    snapshot_address_line2: null,
+    snapshot_subdistrict: null,
+    snapshot_district: null,
+    snapshot_province: null,
+    snapshot_postal_code: null,
+    snapshot_country: null,
+  };
+
+  if (shippingAddressId != null) {
+    const addr = await tx.userShippingAddress.findUnique({
+      where: { id: shippingAddressId },
+    });
+    if (addr) {
+      snapshot = {
+        snapshot_recipient_name: addr.recipient_name,
+        snapshot_phone: addr.phone,
+        snapshot_address_line1: addr.address_line1,
+        snapshot_address_line2: addr.address_line2,
+        snapshot_subdistrict: addr.subdistrict,
+        snapshot_district: addr.district,
+        snapshot_province: addr.province,
+        snapshot_postal_code: addr.postal_code,
+        snapshot_country: addr.country,
+      };
+    }
+  }
+
+  const shipment = await tx.domesticShipment.create({
+    data: {
+      user_id: userId,
+      payment_receipt_id: receiptId,
+      shipping_address_id: shippingAddressId,
+      ...snapshot,
+    },
+  });
+
+  await tx.domesticShipmentItem.createMany({
+    data: auctionIds.map((auction_request_id) => ({
+      shipment_id: shipment.id,
+      auction_request_id,
+    })),
+  });
+
+  await tx.auctionRequest.updateMany({
+    where: { id: { in: auctionIds } },
+    data: { domestic_shipment_id: shipment.id },
+  });
+
+  await tx.deliveryStage.updateMany({
     where: {
       stage_type_id: stageTypeId,
       is_paid: false,
-      auction_request: { user_id: userId },
+      auction_request_id: { in: auctionIds },
     },
     data: { is_paid: true },
   });

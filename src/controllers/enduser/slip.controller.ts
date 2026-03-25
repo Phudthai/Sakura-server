@@ -37,6 +37,33 @@ export async function submitSlip(req: Request, res: Response) {
   }
 
   if (isDomestic) {
+    const addressIdRaw = req.query.addressId as string | undefined
+    const addressId = addressIdRaw != null && addressIdRaw !== '' ? parseInt(addressIdRaw, 10) : NaN
+    if (Number.isNaN(addressId)) {
+      if (fs.existsSync(file.path)) fs.unlinkSync(file.path)
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_ADDRESS_ID',
+          message: 'addressId query parameter is required for domestic slip (e.g. ?purpose=domestic&addressId=1)',
+        },
+      })
+    }
+
+    const address = await prisma.userShippingAddress.findFirst({
+      where: { id: addressId, user_id: userId },
+    })
+    if (!address) {
+      if (fs.existsSync(file.path)) fs.unlinkSync(file.path)
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_ADDRESS_ID',
+          message: 'Shipping address not found or does not belong to your account',
+        },
+      })
+    }
+
     const existingPending = await prisma.paymentReceipt.findFirst({
       where: {
         user_id: userId,
@@ -63,6 +90,7 @@ export async function submitSlip(req: Request, res: Response) {
         year: null,
         transport_type: null,
         purpose: PAYMENT_RECEIPT_PURPOSE_DOMESTIC,
+        shipping_address_id: addressId,
         slip_image_url: slipImageUrl,
         status: 'PENDING_VERIFICATION',
       },
@@ -232,7 +260,7 @@ export async function getSlipStatus(req: Request, res: Response) {
         purpose: PAYMENT_RECEIPT_PURPOSE_DOMESTIC,
       },
       orderBy: { created_at: 'desc' },
-      include: { transactions: true },
+      include: { transactions: true, shipping_address: true },
     })
 
     if (!receipt) {
@@ -247,6 +275,7 @@ export async function getSlipStatus(req: Request, res: Response) {
     }
 
     const totalAllocated = receipt.transactions.reduce((s, t) => s + t.amount, 0)
+    const addr = receipt.shipping_address
 
     return res.json({
       success: true,
@@ -260,6 +289,21 @@ export async function getSlipStatus(req: Request, res: Response) {
           paidAt: receipt.paid_at?.toISOString() ?? null,
           rejectionReason: receipt.rejection_reason ?? null,
           totalAllocated,
+          shippingAddress: addr
+            ? {
+                id: addr.id,
+                label: addr.label,
+                recipientName: addr.recipient_name,
+                phone: addr.phone,
+                addressLine1: addr.address_line1,
+                addressLine2: addr.address_line2,
+                subdistrict: addr.subdistrict,
+                district: addr.district,
+                province: addr.province,
+                postalCode: addr.postal_code,
+                country: addr.country,
+              }
+            : null,
         },
       },
     })

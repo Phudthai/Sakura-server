@@ -7,6 +7,8 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Monorepo: app resolves @prisma/client from repo root; generate into root node_modules
+  output   = "../../../node_modules/.prisma/client"
 }
 
 datasource db {
@@ -19,24 +21,26 @@ datasource db {
 // ==============================================
 
 model User {
-  id              Int      @id @default(autoincrement())
-  user_code       String   @unique @map("user_code")
-  username        String?  @unique
-  external_id     String?  @unique @map("external_id")
-  email           String?  @unique
-  password        String?
-  name            String?
-  phone           String?
-  role            UserRole @default(CUSTOMER)
-  is_email_verified Boolean @default(false) @map("is_email_verified")
-  is_active       Boolean  @default(true) @map("is_active")
-  created_at      DateTime @default(now()) @map("created_at")
-  updated_at      DateTime @updatedAt @map("updated_at")
+  id                Int      @id @default(autoincrement())
+  user_code         String   @unique @map("user_code")
+  username          String?  @unique
+  external_id       String?  @unique @map("external_id")
+  email             String?  @unique
+  password          String?
+  name              String?
+  phone             String?
+  role              UserRole @default(CUSTOMER)
+  is_email_verified Boolean  @default(false) @map("is_email_verified")
+  is_active         Boolean  @default(true) @map("is_active")
+  created_at        DateTime @default(now()) @map("created_at")
+  updated_at        DateTime @updatedAt @map("updated_at")
 
   auction_requests    AuctionRequest[]
   wallet              UserWallet?
   payment_obligations PaymentObligation[]
   payment_receipts    PaymentReceipt[]
+  shipping_addresses  UserShippingAddress[]
+  domestic_shipments  DomesticShipment[]
 
   @@index([email])
   @@index([user_code])
@@ -51,21 +55,46 @@ enum UserRole {
   STAFF
 }
 
+model UserShippingAddress {
+  id             Int      @id @default(autoincrement())
+  user_id        Int      @map("user_id")
+  label          String?
+  recipient_name String   @map("recipient_name")
+  phone          String?
+  address_line1  String   @map("address_line1")
+  address_line2  String?  @map("address_line2")
+  subdistrict    String
+  district       String
+  province       String
+  postal_code    String   @map("postal_code")
+  country        String   @default("TH")
+  is_default     Boolean  @default(false) @map("is_default")
+  created_at     DateTime @default(now()) @map("created_at")
+  updated_at     DateTime @updatedAt @map("updated_at")
+
+  user               User               @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  payment_receipts   PaymentReceipt[]
+  domestic_shipments DomesticShipment[]
+
+  @@index([user_id])
+  @@map("user_shipping_addresses")
+}
+
 // ==============================================
 // Lot (จัดส่ง)
 // ==============================================
 
 model Lot {
-  id               Int       @id @default(autoincrement())
-  lot_code         String    @map("lot_code")
-  intl_shipping_type String  @map("intl_shipping_type")
-  start_lot_at     DateTime? @map("start_lot_at")
-  end_lot_at       DateTime? @map("end_lot_at")
-  arrive_at        DateTime? @map("arrive_at")
-  is_arrived       Boolean   @default(false) @map("is_arrived")
-  is_delayed       Boolean   @default(false) @map("is_delayed")
-  created_at       DateTime  @default(now()) @map("created_at")
-  updated_at       DateTime  @updatedAt @map("updated_at")
+  id                 Int       @id @default(autoincrement())
+  lot_code           String    @map("lot_code")
+  intl_shipping_type String    @map("intl_shipping_type")
+  start_lot_at       DateTime? @map("start_lot_at")
+  end_lot_at         DateTime? @map("end_lot_at")
+  arrive_at          DateTime? @map("arrive_at")
+  is_arrived         Boolean   @default(false) @map("is_arrived")
+  is_delayed         Boolean   @default(false) @map("is_delayed")
+  created_at         DateTime  @default(now()) @map("created_at")
+  updated_at         DateTime  @updatedAt @map("updated_at")
 
   auction_requests AuctionRequest[]
 
@@ -101,11 +130,14 @@ model AuctionRequest {
   created_at         DateTime  @default(now()) @map("created_at")
   updated_at         DateTime  @updatedAt @map("updated_at")
 
-  user               User?              @relation(fields: [user_id], references: [id], onDelete: SetNull)
-  lot                Lot?               @relation(fields: [lot_id], references: [id], onDelete: SetNull)
-  price_logs         AuctionPriceLog[]
-  payment_obligations PaymentObligation[]
-  delivery_stages    DeliveryStage[]
+  user                User?               @relation(fields: [user_id], references: [id], onDelete: SetNull)
+  lot                 Lot?                @relation(fields: [lot_id], references: [id], onDelete: SetNull)
+  price_logs           AuctionPriceLog[]
+  payment_obligations  PaymentObligation[]
+  delivery_stages      DeliveryStage[]
+  domestic_shipment_id Int?                 @map("domestic_shipment_id")
+  domestic_shipment    DomesticShipment?      @relation(fields: [domestic_shipment_id], references: [id], onDelete: SetNull)
+  domestic_shipment_item DomesticShipmentItem?
 
   @@index([status])
   @@index([user_id])
@@ -113,6 +145,7 @@ model AuctionRequest {
   @@index([created_at])
   @@index([status, created_at])
   @@index([user_id, created_at])
+  @@index([domestic_shipment_id])
   @@map("auction_requests")
 }
 
@@ -193,17 +226,17 @@ model UserWallet {
 }
 
 model WalletTransaction {
-  id               Int      @id @default(autoincrement())
-  wallet_id        Int      @map("wallet_id")
-  amount           Int
-  balance_after    Int      @map("balance_after")
-  type             String
-  reference_type   String?  @map("reference_type")
-  reference_id     Int?     @map("reference_id")
-  idempotency_key  String?  @unique @map("idempotency_key")
-  created_at       DateTime @default(now()) @map("created_at")
+  id              Int      @id @default(autoincrement())
+  wallet_id       Int      @map("wallet_id")
+  amount          Int
+  balance_after   Int      @map("balance_after")
+  type            String
+  reference_type  String?  @map("reference_type")
+  reference_id    Int?     @map("reference_id")
+  idempotency_key String?  @unique @map("idempotency_key")
+  created_at      DateTime @default(now()) @map("created_at")
 
-  wallet               UserWallet          @relation(fields: [wallet_id], references: [id], onDelete: Cascade)
+  wallet               UserWallet           @relation(fields: [wallet_id], references: [id], onDelete: Cascade)
   payment_transactions PaymentTransaction[]
 
   @@index([wallet_id])
@@ -216,25 +249,29 @@ model WalletTransaction {
 // ==============================================
 
 model PaymentReceipt {
-  id               Int       @id @default(autoincrement())
-  user_id          Int       @map("user_id")
-  amount           Int       @default(0)
-  slip_image_url   String?   @map("slip_image_url")
-  status           String    @default("PENDING_VERIFICATION")
-  rejection_reason String?   @map("rejection_reason")
-  paid_at          DateTime? @map("paid_at")
-  month            Int?
-  year             Int?
-  transport_type   String?   @map("transport_type")
+  id                  Int       @id @default(autoincrement())
+  user_id             Int       @map("user_id")
+  amount              Int       @default(0)
+  slip_image_url      String?   @map("slip_image_url")
+  status              String    @default("PENDING_VERIFICATION")
+  rejection_reason    String?   @map("rejection_reason")
+  paid_at             DateTime? @map("paid_at")
+  month               Int?
+  year                Int?
+  transport_type      String?   @map("transport_type")
   // null = monthly intl slip; DOMESTIC_SHIPPING = domestic; WALLET_TOPUP = wallet top-up slip
-  purpose          String?   @map("purpose")
-  created_at       DateTime  @default(now()) @map("created_at")
-  updated_at       DateTime  @updatedAt @map("updated_at")
+  purpose             String?   @map("purpose")
+  shipping_address_id Int?      @map("shipping_address_id")
+  created_at          DateTime  @default(now()) @map("created_at")
+  updated_at          DateTime  @updatedAt @map("updated_at")
 
-  user         User                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  transactions PaymentTransaction[]
+  user               User                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  shipping_address   UserShippingAddress? @relation(fields: [shipping_address_id], references: [id], onDelete: SetNull)
+  transactions       PaymentTransaction[]
+  domestic_shipment  DomesticShipment?
 
   @@index([user_id])
+  @@index([shipping_address_id])
   @@index([status])
   @@index([month, transport_type])
   @@index([user_id, purpose, status])
@@ -253,21 +290,21 @@ model PaymentObligationType {
 }
 
 model PaymentObligation {
-  id                  Int       @id @default(autoincrement())
-  auction_request_id  Int?      @map("auction_request_id")
-  user_id             Int?      @map("user_id")
-  obligation_type_id  Int       @map("obligation_type_id")
-  amount              Int
-  currency            String    @default("THB")
-  due_date            DateTime? @map("due_date")
-  status              String    @default("PENDING")
-  created_at          DateTime  @default(now()) @map("created_at")
-  updated_at          DateTime  @updatedAt @map("updated_at")
+  id                 Int       @id @default(autoincrement())
+  auction_request_id Int?      @map("auction_request_id")
+  user_id            Int?      @map("user_id")
+  obligation_type_id Int       @map("obligation_type_id")
+  amount             Int
+  currency           String    @default("THB")
+  due_date           DateTime? @map("due_date")
+  status             String    @default("PENDING")
+  created_at         DateTime  @default(now()) @map("created_at")
+  updated_at         DateTime  @updatedAt @map("updated_at")
 
-  auction_request  AuctionRequest?       @relation(fields: [auction_request_id], references: [id], onDelete: Cascade)
-  user             User?                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  obligation_type  PaymentObligationType @relation(fields: [obligation_type_id], references: [id], onDelete: Restrict)
-  transactions     PaymentTransaction[]
+  auction_request AuctionRequest?       @relation(fields: [auction_request_id], references: [id], onDelete: Cascade)
+  user            User?                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  obligation_type PaymentObligationType @relation(fields: [obligation_type_id], references: [id], onDelete: Restrict)
+  transactions    PaymentTransaction[]
 
   @@index([auction_request_id])
   @@index([user_id])
@@ -296,6 +333,54 @@ model PaymentTransaction {
   @@index([payment_receipt_id])
   @@index([status])
   @@map("payment_transactions")
+}
+
+// ==============================================
+// Domestic shipment batch (รอบจัดส่งในไทยหลังจ่าย DOMESTIC_SHIPPING)
+// ==============================================
+
+model DomesticShipment {
+  id                  Int       @id @default(autoincrement())
+  user_id             Int       @map("user_id")
+  payment_receipt_id  Int?      @unique @map("payment_receipt_id")
+  shipping_address_id Int?      @map("shipping_address_id")
+  // Denormalized copy of user_shipping_addresses at approve time (immutable for this round)
+  snapshot_recipient_name String? @map("snapshot_recipient_name")
+  snapshot_phone          String? @map("snapshot_phone")
+  snapshot_address_line1    String? @map("snapshot_address_line1")
+  snapshot_address_line2    String? @map("snapshot_address_line2")
+  snapshot_subdistrict      String? @map("snapshot_subdistrict")
+  snapshot_district         String? @map("snapshot_district")
+  snapshot_province         String? @map("snapshot_province")
+  snapshot_postal_code      String? @map("snapshot_postal_code")
+  snapshot_country          String? @map("snapshot_country")
+  tracking_number     String?   @map("tracking_number")
+  carrier             String?
+  shipped_at          DateTime? @map("shipped_at")
+  created_at          DateTime  @default(now()) @map("created_at")
+  updated_at          DateTime  @updatedAt @map("updated_at")
+
+  user               User                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  payment_receipt    PaymentReceipt?      @relation(fields: [payment_receipt_id], references: [id], onDelete: SetNull)
+  shipping_address   UserShippingAddress? @relation(fields: [shipping_address_id], references: [id], onDelete: SetNull)
+  items              DomesticShipmentItem[]
+  auction_requests   AuctionRequest[]
+
+  @@index([user_id])
+  @@index([shipping_address_id])
+  @@map("domestic_shipments")
+}
+
+model DomesticShipmentItem {
+  id                 Int @id @default(autoincrement())
+  shipment_id        Int @map("shipment_id")
+  auction_request_id Int @unique @map("auction_request_id")
+
+  shipment        DomesticShipment @relation(fields: [shipment_id], references: [id], onDelete: Cascade)
+  auction_request AuctionRequest   @relation(fields: [auction_request_id], references: [id], onDelete: Cascade)
+
+  @@index([shipment_id])
+  @@map("domestic_shipment_items")
 }
 
 // ==============================================

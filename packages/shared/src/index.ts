@@ -30,3 +30,6 @@ export * from './utils/payment-due.util'
 
 // Exchange rate validators
 export * from './validators/exchange-rate.validator'
+
+// Shipping address validators
+export * from './validators/shipping-address.validator'
