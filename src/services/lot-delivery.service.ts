@@ -36,7 +36,7 @@ export async function markIntlThailandStageDeliveredForLot(
   await db.deliveryStage.updateMany({
     where: {
       stage_type_id: stageTypeId,
-      auction_request: { lot_id: lotId },
+      purchase_request: { lot_id: lotId },
     },
     data: {
       status: "DELIVERED",

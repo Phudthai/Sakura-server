@@ -56,7 +56,7 @@ export async function createTopupObligation(req: Request, res: Response) {
   const obligation = await prisma.paymentObligation.create({
     data: {
       user_id: userId,
-      auction_request_id: null,
+      purchase_request_id: null,
       obligation_type_id: walletTopupType.id,
       amount,
       currency: 'THB',

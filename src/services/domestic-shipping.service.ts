@@ -29,7 +29,7 @@ export async function getDomesticCustomerStageTypeId(): Promise<number> {
 export function buildDomesticPendingAuctionWhere(
   userId: number,
   stageTypeId: number,
-): Prisma.AuctionRequestWhereInput {
+): Prisma.PurchaseRequestWhereInput {
   return {
     user_id: userId,
     lot_id: { not: null },
@@ -62,7 +62,7 @@ export async function getDomesticPendingAuctionRequestIds(
   db: Db = prisma,
 ): Promise<number[]> {
   const stageTypeId = await getDomesticCustomerStageTypeId();
-  const rows = await db.auctionRequest.findMany({
+  const rows = await db.purchaseRequest.findMany({
     where: buildDomesticPendingAuctionWhere(userId, stageTypeId),
     select: { id: true },
   });
@@ -110,7 +110,7 @@ export async function getDomesticShippingPendingItemsForUser(
 ): Promise<DomesticPendingItemPayload> {
   const stageTypeId = await getDomesticCustomerStageTypeId();
 
-  const rows = await prisma.auctionRequest.findMany({
+  const rows = await prisma.purchaseRequest.findMany({
     where: buildDomesticPendingAuctionWhere(userId, stageTypeId),
     include: {
       lot: {
@@ -185,7 +185,7 @@ export async function getDomesticShippingPendingItemsForUser(
 
 /**
  * After DOMESTIC_SHIPPING is paid: create domestic_shipments + items for the same auction rows as
- * domestic-pending-items, set auction_requests.domestic_shipment_id, then mark stage 3 paid only for those rows.
+ * domestic-pending-items, set purchase_requests.domestic_shipment_id, then mark stage 3 paid only for those rows.
  * `receiptId` null = paid via wallet (no slip row).
  */
 export async function completeDomesticShipmentAndMarkStage3Paid(params: {
@@ -210,10 +210,10 @@ export async function completeDomesticShipmentAndMarkStage3Paid(params: {
   }
 
   const alreadyLinked = await tx.domesticShipmentItem.findMany({
-    where: { auction_request_id: { in: auctionIds } },
-    select: { auction_request_id: true },
+    where: { purchase_request_id: { in: auctionIds } },
+    select: { purchase_request_id: true },
   });
-  const linkedSet = new Set(alreadyLinked.map((r) => r.auction_request_id));
+  const linkedSet = new Set(alreadyLinked.map((r) => r.purchase_request_id));
   auctionIds = auctionIds.filter((id) => !linkedSet.has(id));
   if (auctionIds.length === 0) {
     return;
@@ -270,13 +270,13 @@ export async function completeDomesticShipmentAndMarkStage3Paid(params: {
   });
 
   await tx.domesticShipmentItem.createMany({
-    data: auctionIds.map((auction_request_id) => ({
+    data: auctionIds.map((purchase_request_id) => ({
       shipment_id: shipment.id,
-      auction_request_id,
+      purchase_request_id,
     })),
   });
 
-  await tx.auctionRequest.updateMany({
+  await tx.purchaseRequest.updateMany({
     where: { id: { in: auctionIds } },
     data: { domestic_shipment_id: shipment.id },
   });
@@ -285,7 +285,7 @@ export async function completeDomesticShipmentAndMarkStage3Paid(params: {
     where: {
       stage_type_id: stageTypeId,
       is_paid: false,
-      auction_request_id: { in: auctionIds },
+      purchase_request_id: { in: auctionIds },
     },
     data: { is_paid: true },
   });

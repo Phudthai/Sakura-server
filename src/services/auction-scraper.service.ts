@@ -1,6 +1,7 @@
 /**
  * @file auction-scraper.service.ts
  * @description Yahoo Auctions Japan scraper service
+ * @remarks Filename keeps "auction" — this module talks to the Yahoo Auctions site/API, distinct from our `purchase_requests` domain naming.
  * @module @sakura/api/services
  *
  * @author Sakura Team

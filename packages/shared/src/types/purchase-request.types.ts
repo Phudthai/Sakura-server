@@ -1,13 +1,15 @@
 /**
- * @file auction.types.ts
- * @description Auction tracking type definitions
+ * @file purchase-request.types.ts
+ * @description Purchase request tracking type definitions
  * @module @sakura/shared/types
  *
  * @author Sakura Team
  * @created 2026-03-07
  */
 
-export interface AuctionRequestDto {
+export type PurchaseModeDto = "AUCTION" | "BUYOUT"
+
+export interface PurchaseRequestDto {
   id: number
   user_id: string | null
   url: string
@@ -26,6 +28,7 @@ export interface AuctionRequestDto {
   intl_shipping_type: string | null
   lot: string | null
   bought_at: string | null
+  purchase_mode: PurchaseModeDto
   created_at: string
   updated_at: string
 }
@@ -43,9 +46,9 @@ export interface DeliveryStageDto {
   delivered_at: string | null
 }
 
-export interface AuctionPriceLogDto {
+export interface PurchasePriceLogDto {
   id: number
-  auction_request_id: number
+  purchase_request_id: number
   price: number
   bid_count: number
   recorded_at: string

@@ -21,9 +21,16 @@ export async function submitBidBackoffice(req: Request, res: Response) {
 
   const { price, biddedBy } = result.data
 
-  const auctionRequest = await prisma.auctionRequest.findUnique({ where: { id } })
+  const auctionRequest = await prisma.purchaseRequest.findUnique({ where: { id } })
   if (!auctionRequest) {
     return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Auction request not found' } })
+  }
+
+  if (auctionRequest.purchase_mode === 'BUYOUT') {
+    return res.status(409).json({
+      success: false,
+      error: { code: 'NOT_AUCTION_MODE', message: 'Bidding is not available for buyout purchase requests' },
+    })
   }
 
   if (auctionRequest.status === 'completed' || auctionRequest.status === 'cancelled') {
@@ -38,11 +45,11 @@ export async function submitBidBackoffice(req: Request, res: Response) {
     return res.status(404).json({ success: false, error: { code: 'STAFF_NOT_FOUND', message: 'Staff not found' } })
   }
 
-  const bidCount = await prisma.auctionPriceLog.count({ where: { auction_request_id: id } })
+  const bidCount = await prisma.auctionPriceLog.count({ where: { purchase_request_id: id } })
 
   const bid = await prisma.auctionPriceLog.create({
     data: {
-      auction_request_id: id,
+      purchase_request_id: id,
       price,
       bid_count: bidCount + 1,
       status: 'approved',
@@ -54,7 +61,7 @@ export async function submitBidBackoffice(req: Request, res: Response) {
     success: true,
     data: {
       id: bid.id,
-      auctionRequestId: bid.auction_request_id,
+      auctionRequestId: bid.purchase_request_id,
       price: bid.price,
       bidCount: bid.bid_count,
       status: bid.status,
@@ -70,7 +77,7 @@ export async function getPendingBids(_req: Request, res: Response) {
     where: { status: 'pending' },
     orderBy: { recorded_at: 'asc' },
     include: {
-      auction_request: {
+      purchase_request: {
         select: {
           id: true,
           url: true,
@@ -92,26 +99,26 @@ export async function getPendingBids(_req: Request, res: Response) {
     success: true,
     data: logs.map((l) => ({
       id: l.id,
-      auctionRequestId: l.auction_request_id,
+      auctionRequestId: l.purchase_request_id,
       price: l.price,
       bidCount: l.bid_count,
       status: l.status,
       staff: l.staff,
       recordedAt: l.recorded_at.toISOString(),
-      auctionRequest: l.auction_request
+      auctionRequest: l.purchase_request
         ? {
-            id: l.auction_request.id,
-            url: l.auction_request.url,
-            title: l.auction_request.title,
-            imageUrl: l.auction_request.image_url,
-            web: l.auction_request.web,
-            itemId: l.auction_request.item_id,
-            currentPrice: l.auction_request.current_price,
-            endTime: l.auction_request.end_time?.toISOString() ?? null,
-            note: l.auction_request.note,
-            userCode: l.auction_request.user?.user_code ?? null,
-            username: l.auction_request.user?.username ?? null,
-            externalId: l.auction_request.user?.external_id ?? null,
+            id: l.purchase_request.id,
+            url: l.purchase_request.url,
+            title: l.purchase_request.title,
+            imageUrl: l.purchase_request.image_url,
+            web: l.purchase_request.web,
+            itemId: l.purchase_request.item_id,
+            currentPrice: l.purchase_request.current_price,
+            endTime: l.purchase_request.end_time?.toISOString() ?? null,
+            note: l.purchase_request.note,
+            userCode: l.purchase_request.user?.user_code ?? null,
+            username: l.purchase_request.user?.username ?? null,
+            externalId: l.purchase_request.user?.external_id ?? null,
           }
         : null,
     })),
@@ -152,7 +159,7 @@ export async function approveBid(req: Request, res: Response) {
     success: true,
     data: {
       id: updated.id,
-      auctionRequestId: updated.auction_request_id,
+      auctionRequestId: updated.purchase_request_id,
       price: updated.price,
       bidCount: updated.bid_count,
       status: updated.status,
@@ -192,7 +199,7 @@ export async function rejectBid(req: Request, res: Response) {
     success: true,
     data: {
       id: updated.id,
-      auctionRequestId: updated.auction_request_id,
+      auctionRequestId: updated.purchase_request_id,
       price: updated.price,
       bidCount: updated.bid_count,
       status: updated.status,

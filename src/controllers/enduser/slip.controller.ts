@@ -158,7 +158,7 @@ export async function submitSlip(req: Request, res: Response) {
           await tx.paymentObligation.create({
             data: {
               user_id: userId,
-              auction_request_id: null,
+              purchase_request_id: null,
               obligation_type_id: walletTopupType.id,
               amount: 0,
               currency: 'THB',

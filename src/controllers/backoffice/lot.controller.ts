@@ -20,7 +20,7 @@ function mapLotListItem(l: {
   is_delayed: boolean;
   created_at: Date;
   updated_at: Date;
-  _count: { auction_requests: number };
+  _count: { purchase_requests: number };
 }) {
   return {
     id: l.id,
@@ -31,7 +31,7 @@ function mapLotListItem(l: {
     arrive_at: l.arrive_at?.toISOString() ?? null,
     is_arrived: l.is_arrived,
     is_delayed: l.is_delayed,
-    auction_count: l._count.auction_requests,
+    auction_count: l._count.purchase_requests,
     createdAt: l.created_at.toISOString(),
     updatedAt: l.updated_at.toISOString(),
   };
@@ -39,7 +39,7 @@ function mapLotListItem(l: {
 
 /** Lots ที่มีอย่างน้อย 1 รายการประมูลที่ใส่น้ำหนักแล้ว (weight_gram > 0) */
 const lotWhereHasWeightGram: Prisma.LotWhereInput = {
-  auction_requests: {
+  purchase_requests: {
     some: { weight_gram: { gt: 0 } },
   },
 };
@@ -54,7 +54,7 @@ export async function listLotsGroupedByShippingType(
   const filter =
     raw === "air" || raw === "sea" ? (raw as "air" | "sea") : null;
 
-  const include = { _count: { select: { auction_requests: true } } as const };
+  const include = { _count: { select: { purchase_requests: true } } as const };
 
   if (filter) {
     const rows = await prisma.lot.findMany({
@@ -122,7 +122,7 @@ export async function listLots(req: Request, res: Response) {
       skip,
       take: limit,
       include: {
-        _count: { select: { auction_requests: true } },
+        _count: { select: { purchase_requests: true } },
       },
     }),
     prisma.lot.count({ where }),

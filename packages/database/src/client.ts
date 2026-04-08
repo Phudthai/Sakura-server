@@ -23,7 +23,9 @@
  * @created 2026-03-05
  */
 
-import { PrismaClient } from '@prisma/client'
+// Import from repo-root generated client. Nested `packages/database/node_modules/@prisma/client`
+// can be stale and miss delegates (e.g. purchaseRequest) after schema changes.
+import { PrismaClient } from '../../../node_modules/.prisma/client'
 
 /**
  * Global type declaration for Prisma Client

@@ -23,7 +23,7 @@ async function main() {
   await prisma.userWallet.deleteMany()
   await prisma.deliveryStage.deleteMany()
   await prisma.auctionPriceLog.deleteMany()
-  await prisma.auctionRequest.deleteMany()
+  await prisma.purchaseRequest.deleteMany()
   await prisma.staff.deleteMany()
   await prisma.user.deleteMany()
   await prisma.lot.deleteMany()

@@ -9,7 +9,7 @@ import { API_BASE_PATH } from '../../config'
 import { requireAuth } from '../../middleware/auth.middleware'
 import * as walletController from '../../controllers/backoffice/wallet.controller'
 import authRoutes from './auth.routes'
-import auctionRoutes from './auction.routes'
+import purchaseRequestRoutes from './purchase-request.routes'
 import bidsRoutes from './bids.routes'
 import lotRoutes from './lot.routes'
 import overviewRoutes from './overview.routes'
@@ -23,7 +23,7 @@ import exchangeRateRoutes from './exchange-rate.routes'
 const router = Router()
 
 router.use('/auth', authRoutes)
-router.use(auctionRoutes)
+router.use(purchaseRequestRoutes)
 router.use(bidsRoutes)
 router.use(lotRoutes)
 router.use(overviewRoutes)

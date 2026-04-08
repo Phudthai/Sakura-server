@@ -136,7 +136,7 @@ export async function approveSlip(req: Request, res: Response) {
       typeof prisma.paymentObligation.findMany<{
         include: {
           obligation_type: true;
-          auction_request: { include: { lot: true } };
+          purchase_request: { include: { lot: true } };
           transactions: { select: { amount: true } };
         };
       }>
@@ -166,7 +166,7 @@ export async function approveSlip(req: Request, res: Response) {
       },
       include: {
         obligation_type: true,
-        auction_request: { include: { lot: true } },
+        purchase_request: { include: { lot: true } },
         transactions: { select: { amount: true } },
       },
       orderBy: { id: "asc" },
@@ -216,7 +216,7 @@ export async function approveSlip(req: Request, res: Response) {
       orderBy: { id: "asc" },
       include: {
         obligation_type: true,
-        auction_request: { include: { lot: true } },
+        purchase_request: { include: { lot: true } },
         transactions: { select: { amount: true } },
       },
     });
@@ -250,7 +250,7 @@ export async function approveSlip(req: Request, res: Response) {
         ? (
             await prisma.$queryRaw<{ id: number }[]>(
               Prisma.sql`
-            SELECT ar.id FROM auction_requests ar
+            SELECT ar.id FROM purchase_requests ar
             WHERE ar.user_id = ${userId}
               AND ar.bought_at IS NOT NULL
               AND ar.intl_shipping_type IN (${Prisma.join(transportTypes)})
@@ -267,7 +267,7 @@ export async function approveSlip(req: Request, res: Response) {
             await prisma.$queryRaw<{ id: number }[]>(
               Prisma.sql`
             SELECT po.id FROM payment_obligations po
-            JOIN auction_requests ar ON po.auction_request_id = ar.id
+            JOIN purchase_requests ar ON po.purchase_request_id = ar.id
             WHERE (po.user_id = ${userId} OR (po.user_id IS NULL AND ar.user_id = ${userId}))
               AND po.obligation_type_id IN (${Prisma.join(typeIds.map((t) => t.id))})
               AND po.status = 'PENDING'
@@ -284,13 +284,13 @@ export async function approveSlip(req: Request, res: Response) {
       arIds.length > 0
         ? await prisma.paymentObligation.findMany({
             where: {
-              auction_request_id: { in: arIds },
+              purchase_request_id: { in: arIds },
               obligation_type_id: { in: typeIds.map((t) => t.id) },
               status: "PENDING",
             },
             include: {
               obligation_type: true,
-              auction_request: { include: { lot: true } },
+              purchase_request: { include: { lot: true } },
               transactions: { select: { amount: true } },
             },
           })
@@ -303,15 +303,15 @@ export async function approveSlip(req: Request, res: Response) {
               },
               include: {
                 obligation_type: true,
-                auction_request: { include: { lot: true } },
+                purchase_request: { include: { lot: true } },
                 transactions: { select: { amount: true } },
               },
             })
           : [];
 
     obligations = obligationsRaw.sort((a, b) => {
-      const lotA = a.auction_request?.lot;
-      const lotB = b.auction_request?.lot;
+      const lotA = a.purchase_request?.lot;
+      const lotB = b.purchase_request?.lot;
       const hasLotA = !!lotA;
       const hasLotB = !!lotB;
       if (hasLotA !== hasLotB) return hasLotA ? -1 : 1;
@@ -320,8 +320,8 @@ export async function approveSlip(req: Request, res: Response) {
         const endB = lotB!.end_lot_at?.getTime() ?? Number.MAX_SAFE_INTEGER;
         if (endA !== endB) return endA - endB;
       }
-      const arA = a.auction_request;
-      const arB = b.auction_request;
+      const arA = a.purchase_request;
+      const arB = b.purchase_request;
       const endDateA = (arA?.end_time ?? arA?.bought_at)?.getTime() ?? 0;
       const endDateB = (arB?.end_time ?? arB?.bought_at)?.getTime() ?? 0;
       if (endDateA !== endDateB) return endDateA - endDateB;

@@ -4,5 +4,5 @@
  */
 
 export * from './auth.controller'
-export * from './auction.controller'
+export * from './purchase-request.controller'
 export * from './slip.controller'

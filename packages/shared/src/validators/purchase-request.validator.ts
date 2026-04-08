@@ -1,6 +1,6 @@
-/**
- * @file auction.validator.ts
- * @description Auction request validation schemas
+﻿/**
+ * @file purchase-request.validator.ts
+ * @description Purchase request validation schemas
  * @module @sakura/shared/validators
  *
  * @author Sakura Team
@@ -9,30 +9,72 @@
 
 import { z } from "zod";
 
-export const createAuctionRequestSchema = z.object({
-  url: z
-    .string()
-    .url("Invalid URL format")
-    .refine((u) => new URL(u).hostname.includes("auctions.yahoo.co.jp"), {
-      message:
-        "รองรับเฉพาะ Yahoo Auctions Japan (auctions.yahoo.co.jp) เท่านั้น",
-    }),
+const createPurchaseRequestFields = {
+  url: z.string().url("Invalid URL format"),
   firstBidPrice: z.number().int().positive().optional(),
   intl_shipping_type: z.enum(["air", "sea"]),
-});
+  /** When BUYOUT and scrape fails or omits price — optional manual JPY price */
+  fixed_price_jpy: z.number().int().positive().optional(),
+};
 
-/** Backoffice: same as create — creates new user (user_code auto-generated) for first-time customers */
-export const createAuctionBackofficeSchema = createAuctionRequestSchema;
+function refineCreatePurchaseRequestUrl(
+  data: {
+    url: string;
+    purchase_mode: "AUCTION" | "BUYOUT";
+  },
+  ctx: z.RefinementCtx,
+) {
+  let host: string;
+  try {
+    host = new URL(data.url).hostname;
+  } catch {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Invalid URL format",
+      path: ["url"],
+    });
+    return;
+  }
+  if (data.purchase_mode === "AUCTION") {
+    if (!host.includes("auctions.yahoo.co.jp")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "รองรับเฉพาะ Yahoo Auctions Japan (auctions.yahoo.co.jp) เท่านั้น",
+        path: ["url"],
+      });
+    }
+  } else {
+    if (!host.includes("yahoo.co.jp")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "รองรับเฉพาะโดเมน Yahoo Japan (yahoo.co.jp) เท่านั้น",
+        path: ["url"],
+      });
+    }
+  }
+}
 
-export const updateAuctionStatusSchema = z.object({
+/** Enduser + Backoffice: purchase_mode required */
+export const createPurchaseRequestSchema = z
+  .object({
+    ...createPurchaseRequestFields,
+    purchase_mode: z.enum(["AUCTION", "BUYOUT"]),
+  })
+  .superRefine(refineCreatePurchaseRequestUrl);
+
+export const createPurchaseRequestBackofficeSchema =
+  createPurchaseRequestSchema;
+
+export const updatePurchaseRequestStatusSchema = z.object({
   status: z.enum(["tracking", "closed", "cancelled"]),
 });
 
-export const updateAuctionNoteSchema = z.object({
+export const updatePurchaseRequestNoteSchema = z.object({
   note: z.string().max(2000).nullable(),
 });
 
-export const updateAuctionWeightGramSchema = z.object({
+export const updatePurchaseRequestWeightGramSchema = z.object({
   weight_gram: z.number().int().positive("weight_gram must be positive"),
 });
 
@@ -56,7 +98,7 @@ export const submitBidBackofficeSchema = submitBidSchema.extend({
   biddedBy: z.number().int().positive("Staff ID is required"),
 });
 
-export const mockAuctionSchema = z.object({
+export const mockPurchaseRequestSchema = z.object({
   action: z.enum(["outbid", "end-time"]),
 });
 
@@ -90,27 +132,35 @@ export const updateLotSchema = z.object({
   is_delayed: z.boolean().optional(),
 });
 
-export const assignLotToAuctionSchema = z.object({
+export const assignLotToPurchaseRequestSchema = z.object({
   lot_id: z.number().int().positive().nullable(),
 });
 
-export type CreateAuctionRequestInput = z.infer<
-  typeof createAuctionRequestSchema
+export type CreatePurchaseRequestInput = z.infer<
+  typeof createPurchaseRequestSchema
 >;
-export type CreateAuctionBackofficeInput = z.infer<
-  typeof createAuctionBackofficeSchema
+export type CreatePurchaseRequestBackofficeInput = z.infer<
+  typeof createPurchaseRequestBackofficeSchema
 >;
-export type UpdateAuctionStatusInput = z.infer<
-  typeof updateAuctionStatusSchema
+export type UpdatePurchaseRequestStatusInput = z.infer<
+  typeof updatePurchaseRequestStatusSchema
 >;
-export type UpdateAuctionNoteInput = z.infer<typeof updateAuctionNoteSchema>;
-export type UpdateAuctionWeightGramInput = z.infer<typeof updateAuctionWeightGramSchema>;
+export type UpdatePurchaseRequestNoteInput = z.infer<
+  typeof updatePurchaseRequestNoteSchema
+>;
+export type UpdatePurchaseRequestWeightGramInput = z.infer<
+  typeof updatePurchaseRequestWeightGramSchema
+>;
 export type ApproveBidInput = z.infer<typeof approveBidSchema>;
 export type RejectBidInput = z.infer<typeof rejectBidSchema>;
 export type SubmitBidInput = z.infer<typeof submitBidSchema>;
-export type MockAuctionInput = z.infer<typeof mockAuctionSchema>;
+export type MockPurchaseRequestInput = z.infer<
+  typeof mockPurchaseRequestSchema
+>;
 export type CreateStaffInput = z.infer<typeof createStaffSchema>;
 export type UpdateStaffInput = z.infer<typeof updateStaffSchema>;
 export type CreateLotInput = z.infer<typeof createLotSchema>;
 export type UpdateLotInput = z.infer<typeof updateLotSchema>;
-export type AssignLotToAuctionInput = z.infer<typeof assignLotToAuctionSchema>;
+export type AssignLotToPurchaseRequestInput = z.infer<
+  typeof assignLotToPurchaseRequestSchema
+>;

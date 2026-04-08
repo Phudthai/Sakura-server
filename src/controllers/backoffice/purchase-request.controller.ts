@@ -1,23 +1,26 @@
 /**
- * @file auction.controller.ts
- * @description Backoffice auction request operations
+ * @file purchase-request.controller.ts
+ * @description Backoffice purchase request operations
  */
 
 import { Request, Response } from "express";
 import type { PrismaClient } from "@prisma/client";
 import { prisma, generateUserCode } from "../../../packages/database/src";
 import {
-  createAuctionBackofficeSchema,
-  updateAuctionStatusSchema,
-  updateAuctionNoteSchema,
-  updateAuctionWeightGramSchema,
+  createPurchaseRequestBackofficeSchema,
+  updatePurchaseRequestStatusSchema,
+  updatePurchaseRequestNoteSchema,
+  updatePurchaseRequestWeightGramSchema,
   updateDomesticShippingSchema,
-  assignLotToAuctionSchema,
+  assignLotToPurchaseRequestSchema,
   bahtRoundUp,
 } from "../../../packages/shared/src";
 import { jpyToBaht } from "../../services/exchange-rate.service";
 import { getBahtPerGram } from "../../services/intl-shipping-gram-rate.service";
-import { scrapeYahooAuction } from "../../services/auction-scraper.service";
+import {
+  type ScrapeResult,
+  scrapeYahooAuction,
+} from "../../services/auction-scraper.service";
 import { ensureNextLotExists } from "../../services/lot.service";
 import { sweepWalletToObligations } from "../../services/wallet.service";
 import {
@@ -28,7 +31,7 @@ import { computeIntlPaymentSnapshot } from "../../services/auction-intl-payment.
 
 type AuctionListRow = Awaited<
   ReturnType<
-    typeof prisma.auctionRequest.findMany<{
+    typeof prisma.purchaseRequest.findMany<{
       include: {
         price_logs: true;
         user: true;
@@ -88,6 +91,7 @@ function mapAuctionListRow(r: AuctionListRow) {
     deliveryStages: stages,
     isDeliveried,
     endTime: r.end_time?.toISOString() ?? null,
+    purchaseMode: r.purchase_mode,
   };
 }
 
@@ -112,6 +116,22 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
   const overduePayment = req.query.overdue_payment === "true";
   const includeUnpaidCustomerCopy =
     req.query.include_unpaid_customer_copy === "true";
+
+  const purchaseModeRaw = req.query.purchase_mode as string | undefined;
+  let purchaseModeFilter: { purchase_mode: "AUCTION" | "BUYOUT" } | object =
+    {};
+  if (purchaseModeRaw !== undefined && purchaseModeRaw !== "") {
+    if (purchaseModeRaw !== "AUCTION" && purchaseModeRaw !== "BUYOUT") {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "INVALID_QUERY",
+          message: 'purchase_mode must be "AUCTION" or "BUYOUT" when provided',
+        },
+      });
+    }
+    purchaseModeFilter = { purchase_mode: purchaseModeRaw };
+  }
 
   if (includeUnpaidCustomerCopy && !intlOutstanding && !overduePayment) {
     return res.status(400).json({
@@ -153,6 +173,7 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
       : {}),
     ...deliveryStageFilter,
     ...lotIdFilter,
+    ...purchaseModeFilter,
   };
 
   const listInclude = {
@@ -171,14 +192,14 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
 
   if (!needsIntlFilter) {
     const [data, total] = await Promise.all([
-      prisma.auctionRequest.findMany({
+      prisma.purchaseRequest.findMany({
         where,
         orderBy: { created_at: "desc" },
         skip,
         take: limit,
         include: listInclude,
       }),
-      prisma.auctionRequest.count({ where }),
+      prisma.purchaseRequest.count({ where }),
     ]);
 
     return res.json({
@@ -193,7 +214,7 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
     });
   }
 
-  const candidates = await prisma.auctionRequest.findMany({
+  const candidates = await prisma.purchaseRequest.findMany({
     where,
     select: {
       id: true,
@@ -213,7 +234,7 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
       ? []
       : await prisma.paymentObligation.findMany({
           where: {
-            auction_request_id: { in: candIds },
+            purchase_request_id: { in: candIds },
             obligation_type: {
               code: { in: ["PRODUCT_FULL", "INTL_SHIPPING"] },
             },
@@ -226,10 +247,10 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
 
   const obByAr = new Map<number, typeof obligations>();
   for (const ob of obligations) {
-    if (ob.auction_request_id) {
-      const list = obByAr.get(ob.auction_request_id) ?? [];
+    if (ob.purchase_request_id) {
+      const list = obByAr.get(ob.purchase_request_id) ?? [];
       list.push(ob);
-      obByAr.set(ob.auction_request_id, list);
+      obByAr.set(ob.purchase_request_id, list);
     }
   }
 
@@ -300,7 +321,7 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
     });
   }
 
-  const data = await prisma.auctionRequest.findMany({
+  const data = await prisma.purchaseRequest.findMany({
     where: { id: { in: pageIds } },
     include: listInclude,
   });
@@ -323,7 +344,7 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
 }
 
 export async function createAuctionBackoffice(req: Request, res: Response) {
-  const result = createAuctionBackofficeSchema.safeParse(req.body);
+  const result = createPurchaseRequestBackofficeSchema.safeParse(req.body);
   if (!result.success) {
     const errors = result.error.issues.map((i) => ({
       field: i.path.join("."),
@@ -339,19 +360,52 @@ export async function createAuctionBackoffice(req: Request, res: Response) {
     });
   }
 
-  const { url, firstBidPrice, intl_shipping_type } = result.data;
+  const {
+    url,
+    firstBidPrice,
+    intl_shipping_type,
+    purchase_mode,
+    fixed_price_jpy,
+  } = result.data;
 
-  let scraped;
+  let scraped: ScrapeResult | null = null;
   try {
     scraped = await scrapeYahooAuction(url);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Scraping failed";
-    return res
-      .status(422)
-      .json({ success: false, error: { code: "SCRAPE_ERROR", message } });
+    if (purchase_mode === "BUYOUT" && fixed_price_jpy != null) {
+      scraped = {
+        itemId: "",
+        title: "ไม่ทราบชื่อสินค้า",
+        imageUrl: null,
+        currentPrice: fixed_price_jpy,
+        endTime: null,
+        bidCount: 0,
+        partial: true,
+      };
+    } else {
+      const message = err instanceof Error ? err.message : "Scraping failed";
+      return res
+        .status(422)
+        .json({ success: false, error: { code: "SCRAPE_ERROR", message } });
+    }
   }
 
-  const { auctionRequest, userCode } = await prisma.$transaction(async (tx) => {
+  if (!scraped) {
+    return res.status(422).json({
+      success: false,
+      error: { code: "SCRAPE_ERROR", message: "No price data" },
+    });
+  }
+
+  const isBuyout = purchase_mode === "BUYOUT";
+  const priceJpy =
+    isBuyout && fixed_price_jpy != null
+      ? fixed_price_jpy
+      : scraped.currentPrice;
+  const endTime =
+    isBuyout ? null : scraped.endTime ? new Date(scraped.endTime) : null;
+
+  const { purchaseRequest, userCode } = await prisma.$transaction(async (tx) => {
     const userCode = await generateUserCode(tx as Pick<PrismaClient, "user">);
     const user = await tx.user.create({
       data: {
@@ -368,19 +422,20 @@ export async function createAuctionBackoffice(req: Request, res: Response) {
       },
     });
 
-    const auctionRequest = await tx.auctionRequest.create({
+    const pr = await tx.purchaseRequest.create({
       data: {
         user_id: user.id,
         url,
         web: "yahoo",
-        item_id: scraped.itemId,
-        title: scraped.title,
-        image_url: scraped.imageUrl,
-        current_price: scraped.currentPrice,
-        current_price_baht: jpyToBaht(scraped.currentPrice),
-        end_time: scraped.endTime ? new Date(scraped.endTime) : null,
+        item_id: scraped!.itemId,
+        title: scraped!.title,
+        image_url: scraped!.imageUrl,
+        current_price: priceJpy,
+        current_price_baht: jpyToBaht(priceJpy),
+        end_time: endTime,
         status: "pending",
         intl_shipping_type,
+        purchase_mode: isBuyout ? "BUYOUT" : "AUCTION",
       },
     });
 
@@ -389,36 +444,37 @@ export async function createAuctionBackoffice(req: Request, res: Response) {
     });
     await tx.deliveryStage.createMany({
       data: stageTypes.map((st) => ({
-        auction_request_id: auctionRequest.id,
+        purchase_request_id: pr.id,
         stage_type_id: st.id,
         status: "PENDING",
       })),
     });
 
-    if (firstBidPrice != null) {
+    if (firstBidPrice != null && !isBuyout) {
       await tx.auctionPriceLog.create({
         data: {
-          auction_request_id: auctionRequest.id,
+          purchase_request_id: pr.id,
           price: firstBidPrice,
           bid_count: 1,
         },
       });
     }
 
-    return { auctionRequest, userCode };
+    return { purchaseRequest: pr, userCode };
   });
 
   return res.status(201).json({
     success: true,
     data: {
-      id: auctionRequest.id,
+      id: purchaseRequest.id,
       userCode,
       title: scraped.title,
-      currentPrice: auctionRequest.current_price,
+      currentPrice: purchaseRequest.current_price,
       endTime: scraped.endTime,
       imageUrl: scraped.imageUrl,
       itemId: scraped.itemId,
-      status: auctionRequest.status,
+      status: purchaseRequest.status,
+      purchaseMode: purchase_mode,
       partial: scraped.partial ?? false,
     },
     message: "Auction request created",
@@ -434,7 +490,7 @@ export async function updateAuctionNote(req: Request, res: Response) {
     });
   }
 
-  const result = updateAuctionNoteSchema.safeParse(req.body);
+  const result = updatePurchaseRequestNoteSchema.safeParse(req.body);
   if (!result.success) {
     const errors = result.error.issues.map((i) => ({
       field: i.path.join("."),
@@ -450,7 +506,7 @@ export async function updateAuctionNote(req: Request, res: Response) {
     });
   }
 
-  const existing = await prisma.auctionRequest.findUnique({ where: { id } });
+  const existing = await prisma.purchaseRequest.findUnique({ where: { id } });
   if (!existing) {
     return res.status(404).json({
       success: false,
@@ -458,7 +514,7 @@ export async function updateAuctionNote(req: Request, res: Response) {
     });
   }
 
-  const updated = await prisma.auctionRequest.update({
+  const updated = await prisma.purchaseRequest.update({
     where: { id },
     data: { note: result.data.note },
     include: {
@@ -521,7 +577,7 @@ export async function updateAuctionStatus(req: Request, res: Response) {
     });
   }
 
-  const result = updateAuctionStatusSchema.safeParse(req.body);
+  const result = updatePurchaseRequestStatusSchema.safeParse(req.body);
   if (!result.success) {
     const errors = result.error.issues.map((i) => ({
       field: i.path.join("."),
@@ -537,7 +593,7 @@ export async function updateAuctionStatus(req: Request, res: Response) {
     });
   }
 
-  const existing = await prisma.auctionRequest.findUnique({ where: { id } });
+  const existing = await prisma.purchaseRequest.findUnique({ where: { id } });
   if (!existing) {
     return res.status(404).json({
       success: false,
@@ -545,7 +601,7 @@ export async function updateAuctionStatus(req: Request, res: Response) {
     });
   }
 
-  const updated = await prisma.auctionRequest.update({
+  const updated = await prisma.purchaseRequest.update({
     where: { id },
     data: { status: result.data.status },
     include: {
@@ -608,7 +664,7 @@ export async function updateAuctionWeightGram(req: Request, res: Response) {
     });
   }
 
-  const result = updateAuctionWeightGramSchema.safeParse(req.body);
+  const result = updatePurchaseRequestWeightGramSchema.safeParse(req.body);
   if (!result.success) {
     const errors = result.error.issues.map((i) => ({
       field: i.path.join("."),
@@ -624,7 +680,7 @@ export async function updateAuctionWeightGram(req: Request, res: Response) {
     });
   }
 
-  const existing = await prisma.auctionRequest.findUnique({ where: { id } });
+  const existing = await prisma.purchaseRequest.findUnique({ where: { id } });
   if (!existing) {
     return res.status(404).json({
       success: false,
@@ -670,7 +726,7 @@ export async function updateAuctionWeightGram(req: Request, res: Response) {
   });
 
   const updated = await prisma.$transaction(async (tx) => {
-    await tx.auctionRequest.update({
+    await tx.purchaseRequest.update({
       where: { id },
       data: {
         weight_gram: result.data.weight_gram,
@@ -678,18 +734,18 @@ export async function updateAuctionWeightGram(req: Request, res: Response) {
       },
     });
     await tx.deliveryStage.updateMany({
-      where: { auction_request_id: id, stage_type_id: 1 },
+      where: { purchase_request_id: id, stage_type_id: 1 },
       data: { status: "DELIVERED", delivered_at: new Date() },
     });
     await tx.deliveryStage.updateMany({
-      where: { auction_request_id: id, stage_type_id: 2 },
+      where: { purchase_request_id: id, stage_type_id: 2 },
       data: { is_paid: true },
     });
 
     if (intlShippingType && shippingAmount > 0) {
       const existingObligation = await tx.paymentObligation.findFirst({
         where: {
-          auction_request_id: id,
+          purchase_request_id: id,
           obligation_type_id: intlShippingType.id,
         },
       });
@@ -705,7 +761,7 @@ export async function updateAuctionWeightGram(req: Request, res: Response) {
       } else {
         await tx.paymentObligation.create({
           data: {
-            auction_request_id: id,
+            purchase_request_id: id,
             user_id: existing.user_id ?? undefined,
             obligation_type_id: intlShippingType.id,
             amount: shippingAmount,
@@ -717,7 +773,7 @@ export async function updateAuctionWeightGram(req: Request, res: Response) {
       }
     }
 
-    return tx.auctionRequest.findUniqueOrThrow({
+    return tx.purchaseRequest.findUniqueOrThrow({
       where: { id },
       include: {
         lot: true,
@@ -856,13 +912,13 @@ export async function updateDomesticShipping(req: Request, res: Response) {
         where: { id: existingObligation.id },
         data: {
           amount: result.data.amount_baht,
-          auction_request_id: null,
+          purchase_request_id: null,
         },
       });
     } else {
       await tx.paymentObligation.create({
         data: {
-          auction_request_id: null,
+          purchase_request_id: null,
           user_id: userId,
           obligation_type_id: domesticShippingType.id,
           amount: result.data.amount_baht,
@@ -885,7 +941,7 @@ export async function updateDomesticShipping(req: Request, res: Response) {
 export async function listDomesticShippingQueue(req: Request, res: Response) {
   const stageTypeId = await getDomesticCustomerStageTypeId();
 
-  const pendingAr = await prisma.auctionRequest.findMany({
+  const pendingAr = await prisma.purchaseRequest.findMany({
     where: {
       user_id: { not: null },
       lot_id: { not: null },
@@ -1035,7 +1091,7 @@ export async function assignLotToAuction(req: Request, res: Response) {
     });
   }
 
-  const result = assignLotToAuctionSchema.safeParse(req.body);
+  const result = assignLotToPurchaseRequestSchema.safeParse(req.body);
   if (!result.success) {
     const errors = result.error.issues.map((i) => ({
       field: i.path.join("."),
@@ -1051,7 +1107,7 @@ export async function assignLotToAuction(req: Request, res: Response) {
     });
   }
 
-  const existing = await prisma.auctionRequest.findUnique({ where: { id } });
+  const existing = await prisma.purchaseRequest.findUnique({ where: { id } });
   if (!existing) {
     return res.status(404).json({
       success: false,
@@ -1059,7 +1115,7 @@ export async function assignLotToAuction(req: Request, res: Response) {
     });
   }
 
-  const updated = await prisma.auctionRequest.update({
+  const updated = await prisma.purchaseRequest.update({
     where: { id },
     data: { lot_id: result.data.lot_id },
     include: {

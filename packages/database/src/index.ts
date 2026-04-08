@@ -29,5 +29,5 @@ export { prisma } from './client'
 // Export user helpers
 export { generateUserCode } from './user'
 
-// Re-export all Prisma generated types for type safety
-export * from '@prisma/client'
+// Re-export from root-generated client (same reason as client.ts — avoid nested stale @prisma/client)
+export * from '../../../node_modules/.prisma/client'

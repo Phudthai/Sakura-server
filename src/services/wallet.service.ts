@@ -223,15 +223,15 @@ export async function sweepWalletToObligations(params: {
     },
     include: {
       obligation_type: true,
-      auction_request: { include: { lot: true } },
+      purchase_request: { include: { lot: true } },
       transactions: { select: { amount: true } },
     },
   })
 
   const TYPE_ORDER: Record<string, number> = { PRODUCT_FULL: 0, INTL_SHIPPING: 1 }
   obligations.sort((a, b) => {
-    const lotA = a.auction_request?.lot
-    const lotB = b.auction_request?.lot
+    const lotA = a.purchase_request?.lot
+    const lotB = b.purchase_request?.lot
     const hasLotA = !!lotA
     const hasLotB = !!lotB
     if (hasLotA !== hasLotB) return hasLotA ? -1 : 1
@@ -240,8 +240,8 @@ export async function sweepWalletToObligations(params: {
       const endB = lotB!.end_lot_at?.getTime() ?? Number.MAX_SAFE_INTEGER
       if (endA !== endB) return endA - endB
     }
-    const arA = a.auction_request
-    const arB = b.auction_request
+    const arA = a.purchase_request
+    const arB = b.purchase_request
     const endDateA = (arA?.end_time ?? arA?.bought_at)?.getTime() ?? 0
     const endDateB = (arB?.end_time ?? arB?.bought_at)?.getTime() ?? 0
     if (endDateA !== endDateB) return endDateA - endDateB
@@ -337,11 +337,11 @@ export async function payObligationFromWallet(params: {
 
   const obligation = await prisma.paymentObligation.findUnique({
     where: { id: obligationId },
-    include: { obligation_type: true, auction_request: true },
+    include: { obligation_type: true, purchase_request: true },
   })
   if (!obligation) throw new Error('Obligation not found')
 
-  const effectiveUserId = obligation.user_id ?? obligation.auction_request?.user_id
+  const effectiveUserId = obligation.user_id ?? obligation.purchase_request?.user_id
   if (effectiveUserId !== userId) throw new Error('Obligation does not belong to user')
 
   if (obligation.status === 'PAID') throw new Error('Obligation already paid')

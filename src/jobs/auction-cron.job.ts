@@ -1,6 +1,7 @@
 /**
  * @file auction-cron.job.ts
  * @description Cron job for polling Yahoo Auction prices
+ * @remarks Filename keeps "auction" — job targets Yahoo Auctions listings (`purchase_mode: AUCTION`), not HTTP route naming.
  * @module @sakura/api/jobs
  *
  * @author Sakura Team
@@ -27,9 +28,13 @@ export function startAuctionCron(): void {
   cron.schedule(schedule, async () => {
     console.log("[AuctionCron] Running price check...");
 
-    // Fetch all pending requests that haven't ended yet
-    const actives = await prisma.auctionRequest.findMany({
-      where: { status: "pending", end_time: { gt: new Date() } },
+    // Fetch all pending auction-mode requests that haven't ended yet
+    const actives = await prisma.purchaseRequest.findMany({
+      where: {
+        purchase_mode: "AUCTION",
+        status: "pending",
+        end_time: { gt: new Date() },
+      },
     });
 
     const testMode = process.env.AUCTION_CRON_TEST_MODE === "true";
@@ -50,7 +55,7 @@ export function startAuctionCron(): void {
         }
 
         if (ar.current_price !== newPrice) {
-          await prisma.auctionRequest.update({
+          await prisma.purchaseRequest.update({
             where: { id: ar.id },
             data: {
               current_price: newPrice,
@@ -65,7 +70,7 @@ export function startAuctionCron(): void {
         if (testMode) {
           // โหมดทดสอบ: แม้ scrape fail ก็ให้ +1 เพื่อทดสอบ
           const newPrice = (ar.current_price ?? 0) + 1;
-          await prisma.auctionRequest.update({
+          await prisma.purchaseRequest.update({
             where: { id: ar.id },
             data: {
               current_price: newPrice,
@@ -84,9 +89,13 @@ export function startAuctionCron(): void {
       }
     }
 
-    // Complete expired requests + set bid_result
-    const expired = await prisma.auctionRequest.findMany({
-      where: { status: "pending", end_time: { lte: new Date() } },
+    // Complete expired requests + set bid_result (auction mode only)
+    const expired = await prisma.purchaseRequest.findMany({
+      where: {
+        purchase_mode: "AUCTION",
+        status: "pending",
+        end_time: { lte: new Date() },
+      },
     });
 
     const productFullType = await prisma.paymentObligationType.findUnique({
@@ -95,7 +104,7 @@ export function startAuctionCron(): void {
 
     for (const ar of expired) {
       const lastApprovedBid = await prisma.auctionPriceLog.findFirst({
-        where: { auction_request_id: ar.id, status: "approved" },
+        where: { purchase_request_id: ar.id, status: "approved" },
         orderBy: { recorded_at: "desc" },
       });
 
@@ -107,7 +116,7 @@ export function startAuctionCron(): void {
       const boughtAt = ar.end_time ?? new Date();
 
       await prisma.$transaction(async (tx) => {
-        await tx.auctionRequest.update({
+        await tx.purchaseRequest.update({
           where: { id: ar.id },
           data: {
             status: "completed",
@@ -124,7 +133,7 @@ export function startAuctionCron(): void {
           const existingProductObligation = await tx.paymentObligation.findFirst(
             {
               where: {
-                auction_request_id: ar.id,
+                purchase_request_id: ar.id,
                 obligation_type_id: productFullType.id,
               },
             },
@@ -132,7 +141,7 @@ export function startAuctionCron(): void {
           if (!existingProductObligation) {
             await tx.paymentObligation.create({
               data: {
-                auction_request_id: ar.id,
+                purchase_request_id: ar.id,
                 user_id: ar.user_id ?? undefined,
                 obligation_type_id: productFullType.id,
                 amount: bahtRoundUp(ar.current_price_baht!),

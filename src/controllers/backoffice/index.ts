@@ -4,7 +4,7 @@
  */
 
 export * from './auth.controller'
-export * from './auction.controller'
+export * from './purchase-request.controller'
 export * from './bids.controller'
 export * from './staff.controller'
 export * from './customer.controller'

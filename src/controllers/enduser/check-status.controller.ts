@@ -1,6 +1,6 @@
 /**
  * @file check-status.controller.ts
- * @description Enduser check status — products, summary, receiptId by month+transportType
+ * @description Enduser check status โ€” products, summary, receiptId by month+transportType
  */
 
 import { Request, Response } from 'express'
@@ -37,6 +37,18 @@ function parseMonthParam(monthParam: string, yearParam?: string): { month: numbe
   return null
 }
 
+/** Query `purchase_mode`: omit or `all` = both modes; `AUCTION` | `BUYOUT` to filter. */
+function parsePurchaseModeQuery(
+  raw: string | undefined,
+): "all" | "AUCTION" | "BUYOUT" | null {
+  const s = (raw ?? "all").trim()
+  if (s === "" || s.toLowerCase() === "all") return "all"
+  if (s === "AUCTION" || s.toLowerCase() === "auction") return "AUCTION"
+  if (s === "BUYOUT" || s.toLowerCase() === "buyout") return "BUYOUT"
+  return null
+}
+
+
 export async function getCheckStatus(req: Request, res: Response) {
   const userId = req.user?.userId
   if (!userId) {
@@ -57,6 +69,21 @@ export async function getCheckStatus(req: Request, res: Response) {
     return res.status(400).json({ success: false, error: { code: 'INVALID_TRANSPORT_TYPE', message: 'transportType must be "ship" or "airplane"' } })
   }
 
+  const purchaseMode = parsePurchaseModeQuery(req.query.purchase_mode as string | undefined)
+  if (purchaseMode === null) {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: 'INVALID_PURCHASE_MODE',
+        message: 'purchase_mode must be "all", "AUCTION", or "BUYOUT"',
+      },
+    })
+  }
+  const purchaseModeSql =
+    purchaseMode === 'all'
+      ? Prisma.empty
+      : Prisma.sql`AND ar.purchase_mode = CAST(${purchaseMode} AS "PurchaseMode")`
+
   const auctionRequests = await prisma.$queryRaw<
     {
       id: number
@@ -74,13 +101,14 @@ export async function getCheckStatus(req: Request, res: Response) {
     }[]
   >(Prisma.sql`
     SELECT ar.id, ar.title, ar.image_url, ar.current_price, ar.current_price_baht, ar.weight_gram, ar.intl_shipping_type, l.lot_code, l.end_lot_at, l.arrive_at, l.is_delayed, ar.bought_at
-    FROM auction_requests ar
+    FROM purchase_requests ar
     LEFT JOIN lots l ON ar.lot_id = l.id
     WHERE ar.user_id = ${userId}
       AND ar.bought_at IS NOT NULL
       AND ar.intl_shipping_type = ${transportType}
       AND EXTRACT(MONTH FROM ar.bought_at AT TIME ZONE ${BANGKOK_TZ}) = ${month}
       AND EXTRACT(YEAR FROM ar.bought_at AT TIME ZONE ${BANGKOK_TZ}) = ${year}
+      ${purchaseModeSql}
     ORDER BY ar.bought_at ASC
   `)
 
@@ -103,6 +131,7 @@ export async function getCheckStatus(req: Request, res: Response) {
         month: String(month),
         year: String(year),
         transportType: transportType === 'sea' ? 'ship' : 'airplane',
+        purchaseMode,
         user: {
           username: user?.username ?? '',
           customerId: user?.user_code ?? '',
@@ -118,12 +147,12 @@ export async function getCheckStatus(req: Request, res: Response) {
 
   const obligations = await prisma.paymentObligation.findMany({
     where: {
-      auction_request_id: { in: arIds },
+      purchase_request_id: { in: arIds },
       obligation_type: { code: { in: ['PRODUCT_FULL', 'INTL_SHIPPING'] } },
     },
     include: {
       obligation_type: true,
-      auction_request: true,
+      purchase_request: true,
       transactions: { select: { amount: true } },
     },
   })
@@ -149,10 +178,10 @@ export async function getCheckStatus(req: Request, res: Response) {
 
   const obByAr = new Map<number, typeof obligations>()
   for (const ob of obligations) {
-    if (ob.auction_request_id) {
-      const list = obByAr.get(ob.auction_request_id) || []
+    if (ob.purchase_request_id) {
+      const list = obByAr.get(ob.purchase_request_id) || []
       list.push(ob)
-      obByAr.set(ob.auction_request_id, list)
+      obByAr.set(ob.purchase_request_id, list)
     }
   }
 
@@ -160,13 +189,13 @@ export async function getCheckStatus(req: Request, res: Response) {
     (
       await prisma.deliveryStage.findMany({
         where: {
-          auction_request_id: { in: arIds },
+          purchase_request_id: { in: arIds },
           stage_type_id: 1,
           status: 'DELIVERED',
         },
-        select: { auction_request_id: true },
+        select: { purchase_request_id: true },
       })
-    ).map((s) => s.auction_request_id),
+    ).map((s) => s.purchase_request_id),
   )
 
   const shippingRate = getBahtPerGram(transportType)
@@ -244,6 +273,7 @@ export async function getCheckStatus(req: Request, res: Response) {
       month: String(month),
       year: String(year),
       transportType: transportType === 'sea' ? 'ship' : 'airplane',
+      purchaseMode,
       user: {
         username: user?.username ?? '',
         customerId: user?.user_code ?? '',
@@ -265,13 +295,29 @@ export async function getMonths(req: Request, res: Response) {
     return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } })
   }
 
+  const purchaseMode = parsePurchaseModeQuery(req.query.purchase_mode as string | undefined)
+  if (purchaseMode === null) {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: 'INVALID_PURCHASE_MODE',
+        message: 'purchase_mode must be "all", "AUCTION", or "BUYOUT"',
+      },
+    })
+  }
+  const purchaseModeSql =
+    purchaseMode === 'all'
+      ? Prisma.empty
+      : Prisma.sql`AND purchase_mode = CAST(${purchaseMode} AS "PurchaseMode")`
+
   const rows = await prisma.$queryRaw<{ month: number; year: number }[]>(Prisma.sql`
     SELECT DISTINCT
       EXTRACT(MONTH FROM bought_at AT TIME ZONE ${BANGKOK_TZ})::int AS month,
       EXTRACT(YEAR FROM bought_at AT TIME ZONE ${BANGKOK_TZ})::int AS year
-    FROM auction_requests
+    FROM purchase_requests
     WHERE user_id = ${userId}
       AND bought_at IS NOT NULL
+      ${purchaseModeSql}
     ORDER BY year DESC, month DESC
   `)
 
@@ -279,7 +325,7 @@ export async function getMonths(req: Request, res: Response) {
 
   return res.json({
     success: true,
-    data: { months },
+    data: { months, purchaseMode },
   })
 }
 

@@ -209,7 +209,7 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
             if (lot) lotId = lot.id
           }
 
-          const auctionRequest = await prisma.auctionRequest.create({
+          const auctionRequest = await prisma.purchaseRequest.create({
             data: {
               user_id: dbUserId,
               url: urlClean,
@@ -231,7 +231,7 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
           if (obligationTypeMap['PRODUCT_FULL'] != null && parsed.productPriceBaht != null && parsed.productPriceBaht > 0) {
             await prisma.paymentObligation.create({
               data: {
-                auction_request_id: auctionRequest.id,
+                purchase_request_id: auctionRequest.id,
                 user_id: dbUserId,
                 obligation_type_id: obligationTypeMap['PRODUCT_FULL'],
                 amount: bahtRoundUp(parsed.productPriceBaht),
@@ -248,7 +248,7 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
             )
             await prisma.paymentObligation.create({
               data: {
-                auction_request_id: auctionRequest.id,
+                purchase_request_id: auctionRequest.id,
                 user_id: dbUserId,
                 obligation_type_id: obligationTypeId,
                 amount: shippingBaht,
@@ -261,14 +261,14 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
 
           await prisma.deliveryStage.createMany({
             data: stageTypes.map((st) => ({
-              auction_request_id: auctionRequest.id,
+              purchase_request_id: auctionRequest.id,
               stage_type_id: st.id,
               status: 'PENDING',
             })),
           })
 
           const createdIds = await prisma.deliveryStage.findMany({
-            where: { auction_request_id: auctionRequest.id },
+            where: { purchase_request_id: auctionRequest.id },
             orderBy: { id: 'asc' },
           })
 

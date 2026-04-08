@@ -3,12 +3,15 @@
  * @description Backoffice overview stats
  */
 
-import { Request, Response } from "express"
-import { prisma } from "../../../packages/database/src"
-import { getOverviewStats } from "../../services/backoffice-overview.service"
+import { Request, Response } from "express";
+import { parseMonthParam } from "../../../packages/shared/src";
+import {
+  getOverviewDistinctMonths,
+  getOverviewStats,
+} from "../../services/backoffice-overview.service";
 
 export async function getOverviewStatsHandler(req: Request, res: Response) {
-  const typeRaw = req.query.type as string | undefined
+  const typeRaw = req.query.type as string | undefined;
   if (typeRaw !== "air" && typeRaw !== "sea") {
     return res.status(400).json({
       success: false,
@@ -16,42 +19,86 @@ export async function getOverviewStatsHandler(req: Request, res: Response) {
         code: "VALIDATION_ERROR",
         message: 'Query "type" is required and must be "air" or "sea"',
       },
-    })
+    });
   }
-  const intlShippingType = typeRaw
+  const intlShippingType = typeRaw;
 
-  const raw = req.query.lot_id as string | undefined
-  let lotId: number | null = null
-  if (raw !== undefined && raw !== "") {
-    const n = parseInt(raw, 10)
-    if (Number.isNaN(n) || n < 1) {
-      return res.status(400).json({
-        success: false,
-        error: { code: "VALIDATION_ERROR", message: "lot_id must be a positive integer" },
-      })
-    }
-    const lot = await prisma.lot.findUnique({
-      where: { id: n },
-      select: { id: true, intl_shipping_type: true },
-    })
-    if (!lot) {
-      return res.status(404).json({
-        success: false,
-        error: { code: "NOT_FOUND", message: "Lot not found" },
-      })
-    }
-    if (lot.intl_shipping_type !== intlShippingType) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: "VALIDATION_ERROR",
-          message: `lot_id refers to a ${lot.intl_shipping_type} lot; type must match`,
-        },
-      })
-    }
-    lotId = n
+  const parsedMonth = parseMonthParam(
+    (req.query.month as string) ?? "",
+    req.query.year as string | undefined,
+  );
+  if (!parsedMonth) {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        message:
+          'Query "month" is required: use 1-12 with optional year, or year-month (e.g. 2026-3)',
+      },
+    });
   }
 
-  const data = await getOverviewStats({ lotId, intlShippingType })
-  return res.json({ success: true, data })
+  const modeRaw = (req.query.purchase_mode as string | undefined) ?? "all";
+  let purchaseMode: "all" | "AUCTION" | "BUYOUT";
+  if (modeRaw === "all") {
+    purchaseMode = "all";
+  } else if (modeRaw === "AUCTION" || modeRaw === "BUYOUT") {
+    purchaseMode = modeRaw;
+  } else {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        message:
+          'Query "purchase_mode" must be "all", "AUCTION", or "BUYOUT" (default: all)',
+      },
+    });
+  }
+
+  const data = await getOverviewStats({
+    intlShippingType,
+    year: parsedMonth.year,
+    month: parsedMonth.month,
+    purchaseMode,
+  });
+  return res.json({ success: true, data });
 }
+
+/** Months (YYYY-M, Bangkok) that have completed rows — same scope filters as GET overview/stats (no month param). */
+export async function getOverviewMonthsHandler(req: Request, res: Response) {
+  const typeRaw = req.query.type as string | undefined;
+  if (typeRaw !== "air" && typeRaw !== "sea") {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        message: 'Query "type" is required and must be "air" or "sea"',
+      },
+    });
+  }
+  const intlShippingType = typeRaw;
+
+  const modeRaw = (req.query.purchase_mode as string | undefined) ?? "all";
+  let purchaseMode: "all" | "AUCTION" | "BUYOUT";
+  if (modeRaw === "all") {
+    purchaseMode = "all";
+  } else if (modeRaw === "AUCTION" || modeRaw === "BUYOUT") {
+    purchaseMode = modeRaw;
+  } else {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        message:
+          'Query "purchase_mode" must be "all", "AUCTION", or "BUYOUT" (default: all)',
+      },
+    });
+  }
+
+  const months = await getOverviewDistinctMonths({
+    intlShippingType,
+    purchaseMode,
+  });
+  return res.json({ success: true, data: { months } });
+}
+

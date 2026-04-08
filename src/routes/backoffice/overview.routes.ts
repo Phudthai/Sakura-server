@@ -15,4 +15,10 @@ router.get(
   overviewController.getOverviewStatsHandler,
 )
 
+router.get(
+  "/overview/months",
+  requireAuth(["ADMIN", "STAFF"]),
+  overviewController.getOverviewMonthsHandler,
+)
+
 export default router

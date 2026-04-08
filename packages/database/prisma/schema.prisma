@@ -35,7 +35,7 @@ model User {
   created_at        DateTime @default(now()) @map("created_at")
   updated_at        DateTime @updatedAt @map("updated_at")
 
-  auction_requests    AuctionRequest[]
+  purchase_requests   PurchaseRequest[]
   wallet              UserWallet?
   payment_obligations PaymentObligation[]
   payment_receipts    PaymentReceipt[]
@@ -96,7 +96,7 @@ model Lot {
   created_at         DateTime  @default(now()) @map("created_at")
   updated_at         DateTime  @updatedAt @map("updated_at")
 
-  auction_requests AuctionRequest[]
+  purchase_requests PurchaseRequest[]
 
   @@unique([lot_code, intl_shipping_type])
   @@index([lot_code])
@@ -106,37 +106,43 @@ model Lot {
 }
 
 // ==============================================
-// Auction Tracking
+// Purchase requests (auction or buyout)
 // ==============================================
 
-model AuctionRequest {
-  id                 Int       @id @default(autoincrement())
-  user_id            Int?      @map("user_id")
-  url                String
-  web                String?   @default("yahoo")
-  item_id            String?   @map("item_id")
-  title              String?
-  image_url          String?   @map("image_url")
-  end_time           DateTime? @map("end_time")
-  status             String    @default("pending")
-  current_price      Int?      @map("current_price")
-  current_price_baht Int?      @map("current_price_baht")
-  note               String?
-  bid_result         String?   @map("bid_result")
-  weight_gram        Int?      @map("weight_gram")
-  intl_shipping_type String?   @map("intl_shipping_type")
-  lot_id             Int?      @map("lot_id")
-  bought_at          DateTime? @map("bought_at")
-  created_at         DateTime  @default(now()) @map("created_at")
-  updated_at         DateTime  @updatedAt @map("updated_at")
+enum PurchaseMode {
+  AUCTION
+  BUYOUT
+}
 
-  user                User?               @relation(fields: [user_id], references: [id], onDelete: SetNull)
-  lot                 Lot?                @relation(fields: [lot_id], references: [id], onDelete: SetNull)
-  price_logs           AuctionPriceLog[]
-  payment_obligations  PaymentObligation[]
-  delivery_stages      DeliveryStage[]
-  domestic_shipment_id Int?                 @map("domestic_shipment_id")
-  domestic_shipment    DomesticShipment?      @relation(fields: [domestic_shipment_id], references: [id], onDelete: SetNull)
+model PurchaseRequest {
+  id                 Int          @id @default(autoincrement())
+  user_id            Int?         @map("user_id")
+  url                String
+  web                String?      @default("yahoo")
+  item_id            String?      @map("item_id")
+  title              String?
+  image_url          String?      @map("image_url")
+  end_time           DateTime?    @map("end_time")
+  status             String       @default("pending")
+  current_price      Int?         @map("current_price")
+  current_price_baht Int?         @map("current_price_baht")
+  note               String?
+  bid_result         String?      @map("bid_result")
+  weight_gram        Int?         @map("weight_gram")
+  intl_shipping_type String?      @map("intl_shipping_type")
+  lot_id             Int?         @map("lot_id")
+  bought_at          DateTime?    @map("bought_at")
+  purchase_mode      PurchaseMode @default(AUCTION) @map("purchase_mode")
+  created_at         DateTime     @default(now()) @map("created_at")
+  updated_at         DateTime     @updatedAt @map("updated_at")
+
+  user                   User?                  @relation(fields: [user_id], references: [id], onDelete: SetNull)
+  lot                    Lot?                   @relation(fields: [lot_id], references: [id], onDelete: SetNull)
+  price_logs             AuctionPriceLog[]
+  payment_obligations    PaymentObligation[]
+  delivery_stages        DeliveryStage[]
+  domestic_shipment_id   Int?                   @map("domestic_shipment_id")
+  domestic_shipment      DomesticShipment?      @relation(fields: [domestic_shipment_id], references: [id], onDelete: SetNull)
   domestic_shipment_item DomesticShipmentItem?
 
   @@index([status])
@@ -146,22 +152,23 @@ model AuctionRequest {
   @@index([status, created_at])
   @@index([user_id, created_at])
   @@index([domestic_shipment_id])
-  @@map("auction_requests")
+  @@index([purchase_mode])
+  @@map("purchase_requests")
 }
 
 model AuctionPriceLog {
-  id                 Int      @id @default(autoincrement())
-  auction_request_id Int      @map("auction_request_id")
-  price              Int
-  bid_count          Int      @default(0) @map("bid_count")
-  status             String   @default("pending")
-  bidded_by          Int?     @map("bidded_by")
-  recorded_at        DateTime @default(now()) @map("recorded_at")
+  id                  Int      @id @default(autoincrement())
+  purchase_request_id Int      @map("purchase_request_id")
+  price               Int
+  bid_count           Int      @default(0) @map("bid_count")
+  status              String   @default("pending")
+  bidded_by           Int?     @map("bidded_by")
+  recorded_at         DateTime @default(now()) @map("recorded_at")
 
-  auction_request AuctionRequest @relation(fields: [auction_request_id], references: [id], onDelete: Cascade)
-  staff           Staff?         @relation(fields: [bidded_by], references: [id], onDelete: SetNull)
+  purchase_request PurchaseRequest @relation(fields: [purchase_request_id], references: [id], onDelete: Cascade)
+  staff            Staff?          @relation(fields: [bidded_by], references: [id], onDelete: SetNull)
 
-  @@index([auction_request_id])
+  @@index([purchase_request_id])
   @@index([bidded_by])
   @@index([status])
   @@index([status, recorded_at])
@@ -290,23 +297,23 @@ model PaymentObligationType {
 }
 
 model PaymentObligation {
-  id                 Int       @id @default(autoincrement())
-  auction_request_id Int?      @map("auction_request_id")
-  user_id            Int?      @map("user_id")
-  obligation_type_id Int       @map("obligation_type_id")
-  amount             Int
-  currency           String    @default("THB")
-  due_date           DateTime? @map("due_date")
-  status             String    @default("PENDING")
-  created_at         DateTime  @default(now()) @map("created_at")
+  id                  Int       @id @default(autoincrement())
+  purchase_request_id Int?      @map("purchase_request_id")
+  user_id             Int?      @map("user_id")
+  obligation_type_id  Int       @map("obligation_type_id")
+  amount              Int
+  currency            String    @default("THB")
+  due_date            DateTime? @map("due_date")
+  status              String    @default("PENDING")
+  created_at          DateTime  @default(now()) @map("created_at")
   updated_at         DateTime  @updatedAt @map("updated_at")
 
-  auction_request AuctionRequest?       @relation(fields: [auction_request_id], references: [id], onDelete: Cascade)
-  user            User?                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  obligation_type PaymentObligationType @relation(fields: [obligation_type_id], references: [id], onDelete: Restrict)
-  transactions    PaymentTransaction[]
+  purchase_request PurchaseRequest?      @relation(fields: [purchase_request_id], references: [id], onDelete: Cascade)
+  user             User?                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  obligation_type  PaymentObligationType @relation(fields: [obligation_type_id], references: [id], onDelete: Restrict)
+  transactions     PaymentTransaction[]
 
-  @@index([auction_request_id])
+  @@index([purchase_request_id])
   @@index([user_id])
   @@index([status])
   @@map("payment_obligations")
@@ -363,8 +370,8 @@ model DomesticShipment {
   user               User                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
   payment_receipt    PaymentReceipt?      @relation(fields: [payment_receipt_id], references: [id], onDelete: SetNull)
   shipping_address   UserShippingAddress? @relation(fields: [shipping_address_id], references: [id], onDelete: SetNull)
-  items              DomesticShipmentItem[]
-  auction_requests   AuctionRequest[]
+  items               DomesticShipmentItem[]
+  purchase_requests   PurchaseRequest[]
 
   @@index([user_id])
   @@index([shipping_address_id])
@@ -372,12 +379,12 @@ model DomesticShipment {
 }
 
 model DomesticShipmentItem {
-  id                 Int @id @default(autoincrement())
-  shipment_id        Int @map("shipment_id")
-  auction_request_id Int @unique @map("auction_request_id")
+  id                  Int @id @default(autoincrement())
+  shipment_id         Int @map("shipment_id")
+  purchase_request_id Int @unique @map("purchase_request_id")
 
-  shipment        DomesticShipment @relation(fields: [shipment_id], references: [id], onDelete: Cascade)
-  auction_request AuctionRequest   @relation(fields: [auction_request_id], references: [id], onDelete: Cascade)
+  shipment         DomesticShipment @relation(fields: [shipment_id], references: [id], onDelete: Cascade)
+  purchase_request PurchaseRequest  @relation(fields: [purchase_request_id], references: [id], onDelete: Cascade)
 
   @@index([shipment_id])
   @@map("domestic_shipment_items")
@@ -400,23 +407,23 @@ model DeliveryStageType {
 }
 
 model DeliveryStage {
-  id                 Int       @id @default(autoincrement())
-  auction_request_id Int       @map("auction_request_id")
-  stage_type_id      Int       @map("stage_type_id")
-  status             String    @default("PENDING")
-  tracking_number    String?   @map("tracking_number")
-  carrier            String?
-  shipped_at         DateTime? @map("shipped_at")
-  delivered_at       DateTime? @map("delivered_at")
-  is_paid            Boolean   @default(false) @map("is_paid")
-  note               String?
-  created_at         DateTime  @default(now()) @map("created_at")
+  id                  Int       @id @default(autoincrement())
+  purchase_request_id Int       @map("purchase_request_id")
+  stage_type_id       Int       @map("stage_type_id")
+  status              String    @default("PENDING")
+  tracking_number     String?   @map("tracking_number")
+  carrier             String?
+  shipped_at          DateTime? @map("shipped_at")
+  delivered_at        DateTime? @map("delivered_at")
+  is_paid             Boolean   @default(false) @map("is_paid")
+  note                String?
+  created_at          DateTime  @default(now()) @map("created_at")
   updated_at         DateTime  @updatedAt @map("updated_at")
 
-  auction_request AuctionRequest    @relation(fields: [auction_request_id], references: [id], onDelete: Cascade)
-  stage_type      DeliveryStageType @relation(fields: [stage_type_id], references: [id], onDelete: Restrict)
+  purchase_request PurchaseRequest   @relation(fields: [purchase_request_id], references: [id], onDelete: Cascade)
+  stage_type       DeliveryStageType @relation(fields: [stage_type_id], references: [id], onDelete: Restrict)
 
-  @@index([auction_request_id])
+  @@index([purchase_request_id])
   @@index([status])
   @@map("delivery_stages")
 }
