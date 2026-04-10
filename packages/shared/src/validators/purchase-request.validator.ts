@@ -63,8 +63,152 @@ export const createPurchaseRequestSchema = z
   })
   .superRefine(refineCreatePurchaseRequestUrl);
 
-export const createPurchaseRequestBackofficeSchema =
-  createPurchaseRequestSchema;
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+const usernameOpt = z.string().min(1).max(200).optional();
+
+/** Backoffice: POST /api/backoffice/purchase-requests — discriminated by purchase_mode (+ buyout_source for BUYOUT). */
+export const createPurchaseRequestBackofficeAuctionSchema = z
+  .object({
+    purchase_mode: z.literal("AUCTION"),
+    auction_source: z.enum(["yahoo", "mercari"]),
+    url: z.string().url("Invalid URL format"),
+    intl_shipping_type: z.enum(["air", "sea"]),
+    username: usernameOpt,
+    paid: z.number().int().positive().optional(),
+    first_bid_price: z.number().int().positive().optional(),
+    /** Required for mercari until Mercari API/scrape exists — used as listing price when scraping is unavailable. */
+    item_price_jpy: z.number().int().positive().optional(),
+  })
+  .superRefine((data, ctx) => {
+    const h = hostOf(data.url);
+    if (!h) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Invalid URL format",
+        path: ["url"],
+      });
+      return;
+    }
+    if (data.auction_source === "yahoo") {
+      if (!h.includes("auctions.yahoo.co.jp")) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "auction_source yahoo requires Yahoo Auctions Japan URL (auctions.yahoo.co.jp)",
+          path: ["url"],
+        });
+      }
+    } else if (data.auction_source === "mercari") {
+      if (!h.includes("mercari.com")) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "auction_source mercari requires a mercari.com item URL",
+          path: ["url"],
+        });
+      }
+    }
+    const hasPaid = data.paid != null;
+    const hasFirst = data.first_bid_price != null;
+    if (hasPaid && hasFirst) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Cannot send paid and first_bid_price together",
+        path: ["paid"],
+      });
+    }
+    if (!hasPaid && !hasFirst) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Send either paid (instant purchase) or first_bid_price (open auction)",
+        path: ["first_bid_price"],
+      });
+    }
+    if (data.auction_source === "mercari" && data.item_price_jpy == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "item_price_jpy is required for mercari until automated pricing is available",
+        path: ["item_price_jpy"],
+      });
+    }
+  });
+
+export const createPurchaseRequestBackofficeBuyoutMarketplaceSchema = z
+  .object({
+    purchase_mode: z.literal("BUYOUT"),
+    buyout_source: z.enum(["yahoo", "mercari"]),
+    url: z.string().url("Invalid URL format"),
+    intl_shipping_type: z.enum(["air", "sea"]),
+    username: usernameOpt,
+    paid: z.number().int().positive().optional(),
+    client_entry: z.enum(["first_buyout", "not_arrived_japan"]),
+    item_price_jpy: z.number().int().positive().optional(),
+  })
+  .superRefine((data, ctx) => {
+    const h = hostOf(data.url);
+    if (!h) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Invalid URL format",
+        path: ["url"],
+      });
+      return;
+    }
+    if (data.buyout_source === "yahoo") {
+      if (!h.includes("yahoo.co.jp") && !h.includes("auctions.yahoo.co.jp")) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "buyout_source yahoo requires a Yahoo Japan URL",
+          path: ["url"],
+        });
+      }
+    } else if (data.buyout_source === "mercari") {
+      if (!h.includes("mercari.com")) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "buyout_source mercari requires a mercari.com URL",
+          path: ["url"],
+        });
+      }
+      if (data.item_price_jpy == null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "item_price_jpy is required for mercari until automated pricing is available",
+          path: ["item_price_jpy"],
+        });
+      }
+    }
+  });
+
+export const createPurchaseRequestBackofficeBuyoutGeneralWebSchema = z
+  .object({
+    purchase_mode: z.literal("BUYOUT"),
+    buyout_source: z.literal("general_web"),
+    url: z.string().url("Invalid URL format"),
+    intl_shipping_type: z.enum(["air", "sea"]),
+    username: usernameOpt,
+    product_title: z.string().min(1).max(2000),
+    site_name: z.string().min(1).max(500),
+    /** Product price in JPY (manual). */
+    first_bid_price: z.number().int().positive(),
+    paid: z.number().int().positive().optional(),
+    client_entry: z.enum(["first_buyout", "not_arrived_japan"]),
+  })
+  .superRefine((_data, _ctx) => {
+    /* general_web: any valid http(s) url — no extra host rules */
+  });
+
+export const createPurchaseRequestBackofficeSchema = z.union([
+  createPurchaseRequestBackofficeAuctionSchema,
+  createPurchaseRequestBackofficeBuyoutMarketplaceSchema,
+  createPurchaseRequestBackofficeBuyoutGeneralWebSchema,
+]);
 
 export const updatePurchaseRequestStatusSchema = z.object({
   status: z.enum(["tracking", "closed", "cancelled"]),
@@ -83,7 +227,7 @@ export const updateDomesticShippingSchema = z.object({
 });
 
 export const approveBidSchema = z.object({
-  biddedBy: z.number().int().positive("Staff ID is required"),
+  biddedBy: z.number().int().positive("Actor user ID is required"),
 });
 
 export const rejectBidSchema = z.object({
@@ -95,19 +239,11 @@ export const submitBidSchema = z.object({
 });
 
 export const submitBidBackofficeSchema = submitBidSchema.extend({
-  biddedBy: z.number().int().positive("Staff ID is required"),
+  biddedBy: z.number().int().positive("Actor user ID is required"),
 });
 
 export const mockPurchaseRequestSchema = z.object({
   action: z.enum(["outbid", "end-time"]),
-});
-
-export const createStaffSchema = z.object({
-  name: z.string().min(1, "Name is required").max(255),
-});
-
-export const updateStaffSchema = z.object({
-  name: z.string().min(1, "Name is required").max(255),
 });
 
 export const createLotSchema = z.object({
@@ -157,8 +293,6 @@ export type SubmitBidInput = z.infer<typeof submitBidSchema>;
 export type MockPurchaseRequestInput = z.infer<
   typeof mockPurchaseRequestSchema
 >;
-export type CreateStaffInput = z.infer<typeof createStaffSchema>;
-export type UpdateStaffInput = z.infer<typeof updateStaffSchema>;
 export type CreateLotInput = z.infer<typeof createLotSchema>;
 export type UpdateLotInput = z.infer<typeof updateLotSchema>;
 export type AssignLotToPurchaseRequestInput = z.infer<

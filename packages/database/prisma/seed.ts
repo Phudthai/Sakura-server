@@ -1,6 +1,6 @@
 /**
  * @file seed.ts
- * @description Database seeding — Users + Staff only
+ * @description Database seeding — users and reference data
  *
  * @usage
  * ```bash
@@ -87,15 +87,6 @@ async function main() {
     })
   }
   console.log('✅ User wallets created')
-
-  console.log('👥 Creating staffs...')
-  await prisma.staff.createMany({
-    data: [
-      { name: 'สมชาย ใจดี' },
-      { name: 'สมหญิง รักงาน' },
-    ],
-  })
-  console.log('✅ Staffs created')
 
   console.log('💰 Creating payment obligation types...')
   const obligationTypes = [

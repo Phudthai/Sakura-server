@@ -4,7 +4,9 @@
  */
 
 import { Request, Response } from "express";
-import type { PrismaClient } from "@prisma/client";
+import * as fs from "fs";
+import * as path from "path";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { prisma, generateUserCode } from "../../../packages/database/src";
 import {
   createPurchaseRequestBackofficeSchema,
@@ -22,7 +24,10 @@ import {
   scrapeYahooAuction,
 } from "../../services/auction-scraper.service";
 import { ensureNextLotExists } from "../../services/lot.service";
-import { sweepWalletToObligations } from "../../services/wallet.service";
+import {
+  sweepWalletToObligations,
+} from "../../services/wallet.service";
+import { applyConfirmedBackofficePurchaseReceipt } from "../../services/backoffice-payment-allocation.service";
 import {
   getDomesticCustomerStageTypeId,
   getDomesticShippingPendingItemsForUser,
@@ -71,6 +76,7 @@ function mapAuctionListRow(r: AuctionListRow) {
     weightGram: r.weight_gram,
     intlShippingType: r.intl_shipping_type,
     lotId: r.lot_id,
+    webName: r.web ?? null,
     userCode: user?.user_code ?? null,
     username: user?.username ?? null,
     externalId: user?.external_id ?? null,
@@ -101,6 +107,22 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
   const skip = (page - 1) * limit;
   const status = req.query.status as string | undefined;
   const user_code = req.query.user_code as string | undefined;
+
+  const isRegisterRaw = req.query.is_register as string | undefined;
+  if (
+    isRegisterRaw !== undefined &&
+    isRegisterRaw !== "" &&
+    isRegisterRaw !== "true" &&
+    isRegisterRaw !== "false"
+  ) {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: "INVALID_QUERY",
+        message: 'is_register must be "true" or "false" when provided',
+      },
+    });
+  }
 
   const delivery_stage = req.query.delivery_stage as string | undefined;
   const shipping_type = req.query.shipping_type as string | undefined;
@@ -163,11 +185,23 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
     }
   }
 
-  const where = {
+  // user_code wins over is_register=false (staff can look up a specific user)
+  let userWhere: Prisma.UserWhereInput | undefined;
+  if (user_code) {
+    userWhere = { OR: [{ user_code: user_code }, { username: user_code }] };
+  } else if (isRegisterRaw === "false") {
+    userWhere = {
+      AND: [
+        { OR: [{ username: null }, { username: "" }] },
+        { OR: [{ external_id: null }, { external_id: "" }] },
+        { OR: [{ email: null }, { email: "" }] },
+      ],
+    };
+  }
+
+  const where: Prisma.PurchaseRequestWhereInput = {
     ...(status ? { status } : {}),
-    ...(user_code
-      ? { user: { OR: [{ user_code: user_code }, { username: user_code }] } }
-      : {}),
+    ...(userWhere ? { user: userWhere } : {}),
     ...(shipping_type && (shipping_type === "air" || shipping_type === "sea")
       ? { intl_shipping_type: shipping_type }
       : {}),
@@ -343,8 +377,109 @@ export async function listAuctionsBackoffice(req: Request, res: Response) {
   });
 }
 
+function parseBackofficeCreatePayload(req: Request): unknown {
+  const ct = String(req.headers["content-type"] ?? "");
+  if (ct.includes("multipart/form-data")) {
+    const raw = (req.body as { payload?: string }).payload;
+    if (typeof raw !== "string" || raw.trim() === "") {
+      const err = new Error("MISSING_PAYLOAD");
+      (err as Error & { code?: string }).code = "MISSING_PAYLOAD";
+      throw err;
+    }
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      const err = new Error("INVALID_JSON");
+      (err as Error & { code?: string }).code = "INVALID_JSON";
+      throw err;
+    }
+  }
+  return req.body as unknown;
+}
+
+function mercariManualScrape(itemPriceJpy: number): ScrapeResult {
+  return {
+    itemId: "",
+    title: "Mercari (manual price)",
+    imageUrl: null,
+    currentPrice: itemPriceJpy,
+    endTime: null,
+    bidCount: 0,
+    partial: true,
+  };
+}
+
+async function resolveOrCreateCustomerUser(
+  tx: Pick<PrismaClient, "user">,
+  username: string | undefined,
+): Promise<{ id: number; user_code: string }> {
+  const trimmed = username?.trim();
+  if (trimmed) {
+    const existing = await tx.user.findFirst({
+      where: { username: trimmed },
+    });
+    if (existing) {
+      return { id: existing.id, user_code: existing.user_code };
+    }
+  }
+  const userCode = await generateUserCode(tx as Pick<PrismaClient, "user">);
+  const user = await tx.user.create({
+    data: {
+      user_code: userCode,
+      external_id: null,
+      username: null,
+      email: null,
+      password: null,
+      name: null,
+      phone: null,
+      role: "CUSTOMER",
+      is_email_verified: false,
+      is_active: true,
+    },
+  });
+  return { id: user.id, user_code: user.user_code };
+}
+
+async function createDeliveryStagesForPurchaseRequest(
+  tx: Prisma.TransactionClient,
+  purchaseRequestId: number,
+) {
+  const stageTypes = await tx.deliveryStageType.findMany({
+    orderBy: { sort_order: "asc" },
+  });
+  await tx.deliveryStage.createMany({
+    data: stageTypes.map((st) => ({
+      purchase_request_id: purchaseRequestId,
+      stage_type_id: st.id,
+      status: "PENDING",
+    })),
+  });
+}
+
 export async function createAuctionBackoffice(req: Request, res: Response) {
-  const result = createPurchaseRequestBackofficeSchema.safeParse(req.body);
+  let payload: unknown;
+  try {
+    payload = parseBackofficeCreatePayload(req);
+  } catch (e) {
+    const code =
+      e instanceof Error ? (e as Error & { code?: string }).code : undefined;
+    if (code === "MISSING_PAYLOAD") {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "MISSING_PAYLOAD",
+          message:
+            'multipart requests must include a "payload" field with JSON string',
+        },
+      });
+    }
+    return res.status(400).json({
+      success: false,
+      error: { code: "INVALID_JSON", message: "payload is not valid JSON" },
+    });
+  }
+
+  const result = createPurchaseRequestBackofficeSchema.safeParse(payload);
   if (!result.success) {
     const errors = result.error.issues.map((i) => ({
       field: i.path.join("."),
@@ -360,124 +495,522 @@ export async function createAuctionBackoffice(req: Request, res: Response) {
     });
   }
 
-  const {
-    url,
-    firstBidPrice,
-    intl_shipping_type,
-    purchase_mode,
-    fixed_price_jpy,
-  } = result.data;
-
-  let scraped: ScrapeResult | null = null;
-  try {
-    scraped = await scrapeYahooAuction(url);
-  } catch (err) {
-    if (purchase_mode === "BUYOUT" && fixed_price_jpy != null) {
-      scraped = {
-        itemId: "",
-        title: "ไม่ทราบชื่อสินค้า",
-        imageUrl: null,
-        currentPrice: fixed_price_jpy,
-        endTime: null,
-        bidCount: 0,
-        partial: true,
-      };
-    } else {
-      const message = err instanceof Error ? err.message : "Scraping failed";
-      return res
-        .status(422)
-        .json({ success: false, error: { code: "SCRAPE_ERROR", message } });
-    }
-  }
-
-  if (!scraped) {
-    return res.status(422).json({
+  const actorUserId = req.user?.userId;
+  if (!actorUserId) {
+    return res.status(401).json({
       success: false,
-      error: { code: "SCRAPE_ERROR", message: "No price data" },
+      error: { code: "UNAUTHORIZED", message: "Authentication required" },
     });
   }
 
-  const isBuyout = purchase_mode === "BUYOUT";
-  const priceJpy =
-    isBuyout && fixed_price_jpy != null
-      ? fixed_price_jpy
-      : scraped.currentPrice;
-  const endTime =
-    isBuyout ? null : scraped.endTime ? new Date(scraped.endTime) : null;
-
-  const { purchaseRequest, userCode } = await prisma.$transaction(async (tx) => {
-    const userCode = await generateUserCode(tx as Pick<PrismaClient, "user">);
-    const user = await tx.user.create({
-      data: {
-        user_code: userCode,
-        external_id: null,
-        username: null,
-        email: null,
-        password: null,
-        name: null,
-        phone: null,
-        role: "CUSTOMER",
-        is_email_verified: false,
-        is_active: true,
+  const slipFile = req.file as Express.Multer.File | undefined;
+  const data = result.data;
+  const paidRaw =
+    "paid" in data && data.paid != null ? data.paid : undefined;
+  if (paidRaw != null && paidRaw > 0 && !slipFile) {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: "SLIP_REQUIRED",
+        message: "Bank slip file is required when paid amount is provided",
       },
     });
+  }
 
-    const pr = await tx.purchaseRequest.create({
-      data: {
-        user_id: user.id,
-        url,
-        web: "yahoo",
-        item_id: scraped!.itemId,
-        title: scraped!.title,
-        image_url: scraped!.imageUrl,
-        current_price: priceJpy,
-        current_price_baht: jpyToBaht(priceJpy),
-        end_time: endTime,
-        status: "pending",
-        intl_shipping_type,
-        purchase_mode: isBuyout ? "BUYOUT" : "AUCTION",
-      },
-    });
+  let scraped: ScrapeResult;
+  let webTag: string;
+  let auctionSource: string | null = null;
+  let buyoutSource: string | null = null;
+  let clientEntry: string | null = null;
 
-    const stageTypes = await tx.deliveryStageType.findMany({
-      orderBy: { sort_order: "asc" },
-    });
-    await tx.deliveryStage.createMany({
-      data: stageTypes.map((st) => ({
-        purchase_request_id: pr.id,
-        stage_type_id: st.id,
-        status: "PENDING",
-      })),
-    });
+  try {
+    if (data.purchase_mode === "AUCTION") {
+      auctionSource = data.auction_source;
+      clientEntry = null;
+      if (data.auction_source === "yahoo") {
+        webTag = "yahoo";
+        try {
+          scraped = await scrapeYahooAuction(data.url);
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : "Scraping failed";
+          return res.status(422).json({
+            success: false,
+            error: { code: "SCRAPE_ERROR", message },
+          });
+        }
+      } else {
+        webTag = "mercari";
+        const jp = data.item_price_jpy;
+        if (jp == null) {
+          return res.status(400).json({
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "item_price_jpy required for mercari",
+            },
+          });
+        }
+        scraped = mercariManualScrape(jp);
+      }
 
-    if (firstBidPrice != null && !isBuyout) {
-      await tx.auctionPriceLog.create({
-        data: {
-          purchase_request_id: pr.id,
-          price: firstBidPrice,
-          bid_count: 1,
+      const hasPaid = data.paid != null;
+      const hasFirst = data.first_bid_price != null;
+      if (hasPaid && hasFirst) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: "INVALID_COMBINATION",
+            message: "Cannot use paid and first_bid_price together",
+          },
+        });
+      }
+
+      const intl = data.intl_shipping_type;
+      const username = data.username;
+
+      if (data.paid != null) {
+        const boughtAt = new Date();
+        const priceJpy = scraped.currentPrice;
+        const priceBaht = jpyToBaht(priceJpy);
+        const slipPath = slipFile!.path;
+        const slipImageUrl = `/uploads/slips/${path.basename(slipPath)}`;
+
+        const out = await prisma.$transaction(async (tx) => {
+          const u = await resolveOrCreateCustomerUser(tx, username);
+          const productFullType = await tx.paymentObligationType.findUnique({
+            where: { code: "PRODUCT_FULL" },
+          });
+          if (!productFullType) {
+            throw new Error("PRODUCT_FULL obligation type missing");
+          }
+
+          const pr = await tx.purchaseRequest.create({
+            data: {
+              user_id: u.id,
+              url: data.url,
+              web: webTag,
+              auction_source: auctionSource,
+              buyout_source: null,
+              client_entry: null,
+              item_id: scraped.itemId,
+              title: scraped.title,
+              image_url: scraped.imageUrl,
+              current_price: priceJpy,
+              current_price_baht: priceBaht,
+              end_time: null,
+              status: "completed",
+              intl_shipping_type: intl,
+              purchase_mode: "AUCTION",
+              bought_at: boughtAt,
+              bid_result: "won",
+            },
+          });
+
+          await createDeliveryStagesForPurchaseRequest(tx, pr.id);
+
+          await tx.paymentObligation.create({
+            data: {
+              purchase_request_id: pr.id,
+              user_id: u.id,
+              obligation_type_id: productFullType.id,
+              amount: bahtRoundUp(priceBaht ?? 0),
+              currency: "THB",
+              due_date: boughtAt,
+              status: "PENDING",
+            },
+          });
+
+          const receipt = await tx.paymentReceipt.create({
+            data: {
+              user_id: u.id,
+              slip_image_url: slipImageUrl,
+              amount: 0,
+              status: "PENDING_VERIFICATION",
+            },
+          });
+
+          await applyConfirmedBackofficePurchaseReceipt(tx, {
+            receiptId: receipt.id,
+            userId: u.id,
+            amount: data.paid!,
+            paidAt: boughtAt,
+          });
+
+          return {
+            purchaseRequest: pr,
+            userCode: u.user_code,
+            userId: u.id,
+            scraped,
+          };
+        });
+
+        await sweepWalletToObligations({
+          userId: out.userId,
+          sweepKey: `backoffice-pr-${out.purchaseRequest.id}-${Date.now()}`,
+        });
+
+        return res.status(201).json({
+          success: true,
+          data: {
+            id: out.purchaseRequest.id,
+            userCode: out.userCode,
+            title: out.scraped.title,
+            currentPrice: out.purchaseRequest.current_price,
+            endTime: out.scraped.endTime,
+            imageUrl: out.scraped.imageUrl,
+            itemId: out.scraped.itemId,
+            status: out.purchaseRequest.status,
+            purchaseMode: "AUCTION",
+            partial: out.scraped.partial ?? false,
+            receiptAllocated: true,
+          },
+          message: "Auction purchase completed with payment allocation",
+        });
+      }
+
+      if (data.first_bid_price != null) {
+        const endTime = scraped.endTime
+          ? new Date(scraped.endTime)
+          : null;
+        const priceJpy = scraped.currentPrice;
+
+        const { purchaseRequest, userCode } = await prisma.$transaction(
+          async (tx) => {
+            const u = await resolveOrCreateCustomerUser(tx, username);
+            const pr = await tx.purchaseRequest.create({
+              data: {
+                user_id: u.id,
+                url: data.url,
+                web: webTag,
+                auction_source: auctionSource,
+                buyout_source: null,
+                client_entry: null,
+                item_id: scraped.itemId,
+                title: scraped.title,
+                image_url: scraped.imageUrl,
+                current_price: priceJpy,
+                current_price_baht: jpyToBaht(priceJpy),
+                end_time: endTime,
+                status: "pending",
+                intl_shipping_type: intl,
+                purchase_mode: "AUCTION",
+              },
+            });
+            await createDeliveryStagesForPurchaseRequest(tx, pr.id);
+            await tx.auctionPriceLog.create({
+              data: {
+                purchase_request_id: pr.id,
+                price: data.first_bid_price,
+                bid_count: 1,
+                status: "approved",
+                bidded_by: actorUserId,
+              },
+            });
+            return { purchaseRequest: pr, userCode: u.user_code };
+          },
+        );
+
+        return res.status(201).json({
+          success: true,
+          data: {
+            id: purchaseRequest.id,
+            userCode,
+            title: scraped.title,
+            currentPrice: purchaseRequest.current_price,
+            endTime: scraped.endTime,
+            imageUrl: scraped.imageUrl,
+            itemId: scraped.itemId,
+            status: purchaseRequest.status,
+            purchaseMode: "AUCTION",
+            partial: scraped.partial ?? false,
+          },
+          message: "Auction request created",
+        });
+      }
+
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "INVALID_AUCTION",
+          message: "AUCTION requires paid (instant) or first_bid_price (open auction)",
         },
       });
     }
 
-    return { purchaseRequest: pr, userCode };
-  });
+    if (data.purchase_mode === "BUYOUT" && data.buyout_source !== "general_web") {
+      buyoutSource = data.buyout_source;
+      clientEntry = data.client_entry;
+      webTag = data.buyout_source;
 
-  return res.status(201).json({
-    success: true,
-    data: {
-      id: purchaseRequest.id,
-      userCode,
-      title: scraped.title,
-      currentPrice: purchaseRequest.current_price,
-      endTime: scraped.endTime,
-      imageUrl: scraped.imageUrl,
-      itemId: scraped.itemId,
-      status: purchaseRequest.status,
-      purchaseMode: purchase_mode,
-      partial: scraped.partial ?? false,
-    },
-    message: "Auction request created",
+      if (data.buyout_source === "yahoo") {
+        try {
+          scraped = await scrapeYahooAuction(data.url);
+        } catch (err) {
+          if (data.item_price_jpy != null) {
+            scraped = {
+              itemId: "",
+              title: "ไม่ทราบชื่อสินค้า",
+              imageUrl: null,
+              currentPrice: data.item_price_jpy,
+              endTime: null,
+              bidCount: 0,
+              partial: true,
+            };
+          } else {
+            const message =
+              err instanceof Error ? err.message : "Scraping failed";
+            return res.status(422).json({
+              success: false,
+              error: { code: "SCRAPE_ERROR", message },
+            });
+          }
+        }
+      } else {
+        const jp = data.item_price_jpy;
+        if (jp == null) {
+          return res.status(400).json({
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "item_price_jpy required for mercari buyout",
+            },
+          });
+        }
+        scraped = mercariManualScrape(jp);
+      }
+
+      const priceJpy = scraped.currentPrice;
+      const boughtAt = new Date();
+      const intl = data.intl_shipping_type;
+      const username = data.username;
+
+      const out = await prisma.$transaction(async (tx) => {
+        const u = await resolveOrCreateCustomerUser(tx, username);
+        const productFullType = await tx.paymentObligationType.findUnique({
+          where: { code: "PRODUCT_FULL" },
+        });
+        if (!productFullType) {
+          throw new Error("PRODUCT_FULL obligation type missing");
+        }
+
+        const pr = await tx.purchaseRequest.create({
+          data: {
+            user_id: u.id,
+            url: data.url,
+            web: webTag,
+            auction_source: null,
+            buyout_source: buyoutSource,
+            client_entry: clientEntry,
+            item_id: scraped.itemId,
+            title: scraped.title,
+            image_url: scraped.imageUrl,
+            current_price: priceJpy,
+            current_price_baht: jpyToBaht(priceJpy),
+            end_time: null,
+            status: "completed",
+            intl_shipping_type: intl,
+            purchase_mode: "BUYOUT",
+            bought_at: boughtAt,
+            bid_result: "won",
+          },
+        });
+
+        await createDeliveryStagesForPurchaseRequest(tx, pr.id);
+
+        await tx.paymentObligation.create({
+          data: {
+            purchase_request_id: pr.id,
+            user_id: u.id,
+            obligation_type_id: productFullType.id,
+            amount: bahtRoundUp(jpyToBaht(priceJpy) ?? 0),
+            currency: "THB",
+            due_date: boughtAt,
+            status: "PENDING",
+          },
+        });
+
+        if (data.paid != null && data.paid > 0) {
+          const slipPath = slipFile!.path;
+          const slipImageUrl = `/uploads/slips/${path.basename(slipPath)}`;
+          const receipt = await tx.paymentReceipt.create({
+            data: {
+              user_id: u.id,
+              slip_image_url: slipImageUrl,
+              amount: 0,
+              status: "PENDING_VERIFICATION",
+            },
+          });
+          await applyConfirmedBackofficePurchaseReceipt(tx, {
+            receiptId: receipt.id,
+            userId: u.id,
+            amount: data.paid,
+            paidAt: boughtAt,
+          });
+        }
+
+        return {
+          purchaseRequest: pr,
+          userCode: u.user_code,
+          userId: u.id,
+          scraped,
+        };
+      });
+
+      if (data.paid != null && data.paid > 0) {
+        await sweepWalletToObligations({
+          userId: out.userId,
+          sweepKey: `backoffice-buyout-${out.purchaseRequest.id}-${Date.now()}`,
+        });
+      }
+
+      return res.status(201).json({
+        success: true,
+        data: {
+          id: out.purchaseRequest.id,
+          userCode: out.userCode,
+          title: out.scraped.title,
+          currentPrice: out.purchaseRequest.current_price,
+          endTime: null,
+          imageUrl: out.scraped.imageUrl,
+          itemId: out.scraped.itemId,
+          status: out.purchaseRequest.status,
+          purchaseMode: "BUYOUT",
+          partial: out.scraped.partial ?? false,
+        },
+        message: "Buyout purchase request created",
+      });
+    }
+
+    if (data.purchase_mode === "BUYOUT" && data.buyout_source === "general_web") {
+      buyoutSource = "general_web";
+      clientEntry = data.client_entry;
+      const priceJpy = data.first_bid_price;
+      const boughtAt = new Date();
+      scraped = {
+        itemId: "",
+        title: data.product_title,
+        imageUrl: null,
+        currentPrice: priceJpy,
+        endTime: null,
+        bidCount: 0,
+        partial: true,
+      };
+
+      const out = await prisma.$transaction(async (tx) => {
+        const u = await resolveOrCreateCustomerUser(tx, data.username);
+        const productFullType = await tx.paymentObligationType.findUnique({
+          where: { code: "PRODUCT_FULL" },
+        });
+        if (!productFullType) {
+          throw new Error("PRODUCT_FULL obligation type missing");
+        }
+
+        const pr = await tx.purchaseRequest.create({
+          data: {
+            user_id: u.id,
+            url: data.url,
+            web: data.site_name.trim(),
+            auction_source: null,
+            buyout_source: buyoutSource,
+            client_entry: clientEntry,
+            item_id: scraped.itemId,
+            title: data.product_title,
+            image_url: scraped.imageUrl,
+            current_price: priceJpy,
+            current_price_baht: jpyToBaht(priceJpy),
+            end_time: null,
+            status: "completed",
+            intl_shipping_type: data.intl_shipping_type,
+            purchase_mode: "BUYOUT",
+            bought_at: boughtAt,
+            bid_result: "won",
+          },
+        });
+
+        await createDeliveryStagesForPurchaseRequest(tx, pr.id);
+
+        await tx.paymentObligation.create({
+          data: {
+            purchase_request_id: pr.id,
+            user_id: u.id,
+            obligation_type_id: productFullType.id,
+            amount: bahtRoundUp(jpyToBaht(priceJpy) ?? 0),
+            currency: "THB",
+            due_date: boughtAt,
+            status: "PENDING",
+          },
+        });
+
+        if (data.paid != null && data.paid > 0) {
+          const slipPath = slipFile!.path;
+          const slipImageUrl = `/uploads/slips/${path.basename(slipPath)}`;
+          const receipt = await tx.paymentReceipt.create({
+            data: {
+              user_id: u.id,
+              slip_image_url: slipImageUrl,
+              amount: 0,
+              status: "PENDING_VERIFICATION",
+            },
+          });
+          await applyConfirmedBackofficePurchaseReceipt(tx, {
+            receiptId: receipt.id,
+            userId: u.id,
+            amount: data.paid,
+            paidAt: boughtAt,
+          });
+        }
+
+        return {
+          purchaseRequest: pr,
+          userCode: u.user_code,
+          userId: u.id,
+          scraped,
+        };
+      });
+
+      if (data.paid != null && data.paid > 0) {
+        await sweepWalletToObligations({
+          userId: out.userId,
+          sweepKey: `backoffice-gw-${out.purchaseRequest.id}-${Date.now()}`,
+        });
+      }
+
+      return res.status(201).json({
+        success: true,
+        data: {
+          id: out.purchaseRequest.id,
+          userCode: out.userCode,
+          title: data.product_title,
+          currentPrice: out.purchaseRequest.current_price,
+          endTime: null,
+          imageUrl: null,
+          itemId: "",
+          status: out.purchaseRequest.status,
+          purchaseMode: "BUYOUT",
+          partial: true,
+        },
+        message: "Buyout (general web) purchase request created",
+      });
+    }
+  } catch (err) {
+    if (slipFile?.path && fs.existsSync(slipFile.path)) {
+      try {
+        fs.unlinkSync(slipFile.path);
+      } catch {
+        /* ignore */
+      }
+    }
+    const message = err instanceof Error ? err.message : "Server error";
+    return res.status(500).json({
+      success: false,
+      error: { code: "INTERNAL", message },
+    });
+  }
+
+  return res.status(500).json({
+    success: false,
+    error: { code: "UNHANDLED", message: "Unhandled create branch" },
   });
 }
 

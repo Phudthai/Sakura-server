@@ -40,9 +40,9 @@ export async function submitBidBackoffice(req: Request, res: Response) {
     })
   }
 
-  const staff = await prisma.staff.findUnique({ where: { id: biddedBy } })
-  if (!staff) {
-    return res.status(404).json({ success: false, error: { code: 'STAFF_NOT_FOUND', message: 'Staff not found' } })
+  const actor = await prisma.user.findUnique({ where: { id: biddedBy } })
+  if (!actor) {
+    return res.status(404).json({ success: false, error: { code: 'USER_NOT_FOUND', message: 'Actor user not found' } })
   }
 
   const bidCount = await prisma.auctionPriceLog.count({ where: { purchase_request_id: id } })
@@ -91,7 +91,7 @@ export async function getPendingBids(_req: Request, res: Response) {
           user: { select: { user_code: true, username: true, external_id: true } },
         },
       },
-      staff: { select: { id: true, name: true } },
+      bidder: { select: { id: true, name: true, username: true } },
     },
   })
 
@@ -103,7 +103,7 @@ export async function getPendingBids(_req: Request, res: Response) {
       price: l.price,
       bidCount: l.bid_count,
       status: l.status,
-      staff: l.staff,
+      bidder: l.bidder,
       recordedAt: l.recorded_at.toISOString(),
       auctionRequest: l.purchase_request
         ? {
@@ -145,9 +145,9 @@ export async function approveBid(req: Request, res: Response) {
     return res.status(409).json({ success: false, error: { code: 'ALREADY_PROCESSED', message: `Bid already ${log.status}` } })
   }
 
-  const staff = await prisma.staff.findUnique({ where: { id: result.data.biddedBy } })
-  if (!staff) {
-    return res.status(404).json({ success: false, error: { code: 'STAFF_NOT_FOUND', message: 'Staff not found' } })
+  const actor = await prisma.user.findUnique({ where: { id: result.data.biddedBy } })
+  if (!actor) {
+    return res.status(404).json({ success: false, error: { code: 'USER_NOT_FOUND', message: 'Actor user not found' } })
   }
 
   const updated = await prisma.auctionPriceLog.update({
@@ -166,7 +166,7 @@ export async function approveBid(req: Request, res: Response) {
       biddedBy: updated.bidded_by,
       recordedAt: updated.recorded_at.toISOString(),
     },
-    message: `Bid #${id} approved — assigned to ${staff.name}`,
+    message: `Bid #${id} approved — assigned to ${actor.name ?? actor.username ?? `#${actor.id}`}`,
   })
 }
 

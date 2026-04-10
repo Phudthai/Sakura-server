@@ -38,6 +38,62 @@ function getBangkokMonthBoundsUtc(
   return { start, endExclusive };
 }
 
+const DOMESTIC_OBLIGATION_CODE = "DOMESTIC_SHIPPING";
+
+/**
+ * Domestic shipping (Thailand) for overview: not filtered by air/sea.
+ * Month = Bangkok calendar month on payment_transactions.paid_at.
+ * Only CONFIRMED txs on DOMESTIC_SHIPPING obligations with status PAID.
+ */
+export async function getDomesticShippingOverviewForBangkokMonth(params: {
+  start: Date;
+  endExclusive: Date;
+}): Promise<{
+  totalBaht: number;
+  paidBaht: number;
+  outstandingBaht: number;
+}> {
+  const { start, endExclusive } = params;
+
+  const rows = await prisma.$queryRaw<
+    { paid_baht: bigint | null; total_baht: bigint | null }[]
+  >(
+    Prisma.sql`
+    WITH filtered AS (
+      SELECT
+        pt.amount AS tx_amount,
+        po.id AS ob_id,
+        po.amount AS ob_amount
+      FROM payment_transactions pt
+      INNER JOIN payment_obligations po ON pt.payment_obligation_id = po.id
+      INNER JOIN payment_obligation_types pot ON po.obligation_type_id = pot.id
+      WHERE pot.code = ${DOMESTIC_OBLIGATION_CODE}
+        AND po.status = 'PAID'
+        AND pt.status = 'CONFIRMED'
+        AND pt.paid_at >= ${start}
+        AND pt.paid_at < ${endExclusive}
+    )
+    SELECT
+      COALESCE((SELECT SUM(tx_amount) FROM filtered), 0)::bigint AS paid_baht,
+      COALESCE((
+        SELECT SUM(s.ob_amount)::bigint
+        FROM (
+          SELECT ob_id, MAX(ob_amount) AS ob_amount
+          FROM filtered
+          GROUP BY ob_id
+        ) s
+      ), 0)::bigint AS total_baht
+    `,
+  );
+
+  const row = rows[0];
+  const paidBaht = Number(row?.paid_baht ?? 0);
+  const totalBaht = Number(row?.total_baht ?? 0);
+  const outstandingBaht = Math.max(0, totalBaht - paidBaht);
+
+  return { totalBaht, paidBaht, outstandingBaht };
+}
+
 export async function getOverviewStats(params: {
   intlShippingType: OverviewIntlShippingType;
   year: number;
@@ -111,6 +167,13 @@ export async function getOverviewStats(params: {
     intlShippingOutstandingBaht += b.intlShippingOutstandingBaht;
   }
 
+  const itemCount = rows.length;
+
+  const domesticShipping = await getDomesticShippingOverviewForBangkokMonth({
+    start,
+    endExclusive,
+  });
+
   return {
     scope: {
       year: params.year,
@@ -123,6 +186,7 @@ export async function getOverviewStats(params: {
         endExclusive: endExclusive.toISOString(),
       },
     },
+    itemCount,
     totalGrams,
     product: {
       totalBaht: productTotalBaht,
@@ -133,6 +197,11 @@ export async function getOverviewStats(params: {
       totalBaht: intlShippingTotalBaht,
       paidBaht: intlShippingPaidBaht,
       outstandingBaht: intlShippingOutstandingBaht,
+    },
+    domesticShipping: {
+      totalBaht: domesticShipping.totalBaht,
+      paidBaht: domesticShipping.paidBaht,
+      outstandingBaht: domesticShipping.outstandingBaht,
     },
   };
 }
@@ -168,4 +237,3 @@ export async function getOverviewDistinctMonths(params: {
 
   return rows.map((r) => `${r.year}-${r.month}`);
 }
-

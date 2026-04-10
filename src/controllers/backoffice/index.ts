@@ -6,6 +6,5 @@
 export * from './auth.controller'
 export * from './purchase-request.controller'
 export * from './bids.controller'
-export * from './staff.controller'
 export * from './customer.controller'
 export * from './payment.controller'

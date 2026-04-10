@@ -10,6 +10,11 @@ import * as authController from '../../controllers/backoffice/auth.controller'
 const router = Router()
 
 router.post('/login', authController.loginBackoffice)
+router.post(
+  '/staff',
+  requireAuth(['ADMIN']),
+  authController.createBackofficeStaff,
+)
 router.get('/me', requireAuth(['ADMIN', 'STAFF']), authController.meBackoffice)
 
 export default router

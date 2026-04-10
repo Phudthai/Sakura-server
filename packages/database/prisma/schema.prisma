@@ -41,6 +41,7 @@ model User {
   payment_receipts    PaymentReceipt[]
   shipping_addresses  UserShippingAddress[]
   domestic_shipments  DomesticShipment[]
+  auction_bids_placed AuctionPriceLog[] @relation("AuctionPriceLogBidder")
 
   @@index([email])
   @@index([user_code])
@@ -133,6 +134,9 @@ model PurchaseRequest {
   lot_id             Int?         @map("lot_id")
   bought_at          DateTime?    @map("bought_at")
   purchase_mode      PurchaseMode @default(AUCTION) @map("purchase_mode")
+  auction_source     String?      @map("auction_source")
+  buyout_source      String?      @map("buyout_source")
+  client_entry       String?      @map("client_entry")
   created_at         DateTime     @default(now()) @map("created_at")
   updated_at         DateTime     @updatedAt @map("updated_at")
 
@@ -166,24 +170,13 @@ model AuctionPriceLog {
   recorded_at         DateTime @default(now()) @map("recorded_at")
 
   purchase_request PurchaseRequest @relation(fields: [purchase_request_id], references: [id], onDelete: Cascade)
-  staff            Staff?          @relation(fields: [bidded_by], references: [id], onDelete: SetNull)
+  bidder           User?           @relation("AuctionPriceLogBidder", fields: [bidded_by], references: [id], onDelete: SetNull)
 
   @@index([purchase_request_id])
   @@index([bidded_by])
   @@index([status])
   @@index([status, recorded_at])
   @@map("auction_price_logs")
-}
-
-model Staff {
-  id         Int      @id @default(autoincrement())
-  name       String
-  created_at DateTime @default(now()) @map("created_at")
-  updated_at DateTime @updatedAt @map("updated_at")
-
-  price_logs AuctionPriceLog[]
-
-  @@map("staffs")
 }
 
 // ==============================================

@@ -86,6 +86,49 @@ export const loginSchema = z.object({
 export type LoginInput = z.infer<typeof loginSchema>
 
 /**
+ * ADMIN-only: create a backoffice team user (currently role must be STAFF).
+ */
+export const createBackofficeStaffUserSchema = z.object({
+  email: z
+    .string({ required_error: 'Email is required' })
+    .email('Invalid email format')
+    .toLowerCase()
+    .max(255, 'Email too long'),
+  password: z
+    .string({ required_error: 'Password is required' })
+    .min(8, 'Password must be at least 8 characters'),
+  name: z
+    .string({ required_error: 'Name is required' })
+    .min(2, 'Name must be at least 2 characters')
+    .max(100, 'Name too long'),
+  role: z.literal('STAFF'),
+  username: z.string().min(1).max(100).optional(),
+})
+
+export type CreateBackofficeStaffUserInput = z.infer<
+  typeof createBackofficeStaffUserSchema
+>
+
+/** ADMIN-only: partial update of any user (staff / customer / admin). */
+export const updateBackofficeUserSchema = z
+  .object({
+    email: z.string().email().toLowerCase().max(255).optional(),
+    name: z.string().min(2).max(100).optional(),
+    username: z.union([z.string().min(1).max(100), z.null()]).optional(),
+    phone: z.union([z.string().max(50), z.null()]).optional(),
+    password: z.string().min(8, 'Password must be at least 8 characters').optional(),
+    is_active: z.boolean().optional(),
+    is_email_verified: z.boolean().optional(),
+    role: z.enum(['CUSTOMER', 'STAFF', 'ADMIN']).optional(),
+  })
+  .strict()
+  .refine((d) => Object.values(d).some((v) => v !== undefined), {
+    message: 'At least one field is required',
+  })
+
+export type UpdateBackofficeUserInput = z.infer<typeof updateBackofficeUserSchema>
+
+/**
  * Password reset request schema
  */
 export const resetPasswordRequestSchema = z.object({
