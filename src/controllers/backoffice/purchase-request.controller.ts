@@ -13,6 +13,7 @@ import {
   updatePurchaseRequestStatusSchema,
   updatePurchaseRequestNoteSchema,
   updatePurchaseRequestWeightGramSchema,
+  updatePurchaseRequestIntlShippingTypeSchema,
   updateDomesticShippingSchema,
   assignLotToPurchaseRequestSchema,
   bahtRoundUp,
@@ -29,6 +30,7 @@ import {
 } from "../../services/wallet.service";
 import { applyConfirmedBackofficePurchaseReceipt } from "../../services/backoffice-payment-allocation.service";
 import {
+  buildDomesticQueueBaseWhere,
   getDomesticCustomerStageTypeId,
   getDomesticShippingPendingItemsForUser,
 } from "../../services/domestic-shipping.service";
@@ -1101,6 +1103,117 @@ export async function updateAuctionNote(req: Request, res: Response) {
   });
 }
 
+export async function updatePurchaseRequestIntlShippingType(
+  req: Request,
+  res: Response,
+) {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) {
+    return res.status(400).json({
+      success: false,
+      error: { code: "INVALID_ID", message: "Invalid id" },
+    });
+  }
+
+  const result = updatePurchaseRequestIntlShippingTypeSchema.safeParse(
+    req.body,
+  );
+  if (!result.success) {
+    const errors = result.error.issues.map((i) => ({
+      field: i.path.join("."),
+      message: i.message,
+    }));
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Invalid input",
+        details: { errors },
+      },
+    });
+  }
+
+  const existing = await prisma.purchaseRequest.findUnique({ where: { id } });
+  if (!existing) {
+    return res.status(404).json({
+      success: false,
+      error: { code: "NOT_FOUND", message: "Auction request not found" },
+    });
+  }
+
+  if (existing.weight_gram != null) {
+    return res.status(409).json({
+      success: false,
+      error: {
+        code: "WEIGHT_GRAM_ALREADY_SET",
+        message:
+          "Cannot change shipping method after weight (grams) has been recorded",
+      },
+    });
+  }
+
+  const newType = result.data.intl_shipping_type;
+  const typeChanged = existing.intl_shipping_type !== newType;
+
+  const updated = await prisma.purchaseRequest.update({
+    where: { id },
+    data: {
+      intl_shipping_type: newType,
+      ...(typeChanged ? { lot_id: null } : {}),
+    },
+    include: {
+      delivery_stages: {
+        include: { stage_type: true },
+        orderBy: { stage_type: { sort_order: "asc" } },
+      },
+    },
+  });
+
+  const stages = updated.delivery_stages.map((s) => ({
+    id: s.id,
+    stageTypeCode: s.stage_type.code,
+    stageTypeNameTh: s.stage_type.name_th,
+    status: s.status,
+    isPaid: s.is_paid,
+    trackingNumber: s.tracking_number ?? null,
+    carrier: s.carrier ?? null,
+    shippedAt: s.shipped_at?.toISOString() ?? null,
+    deliveredAt: s.delivered_at?.toISOString() ?? null,
+  }));
+  const isDeliveried =
+    stages.length > 0 && stages.every((s) => s.status === "DELIVERED");
+  return res.json({
+    success: true,
+    data: {
+      id: updated.id,
+      userId: updated.user_id,
+      url: updated.url,
+      web: updated.web,
+      itemId: updated.item_id,
+      title: updated.title,
+      imageUrl: updated.image_url,
+      status: updated.status,
+      currentPrice: updated.current_price,
+      currentPriceBaht: updated.current_price_baht,
+      note: updated.note,
+      bidResult: updated.bid_result,
+      weightGram: updated.weight_gram,
+      intlShippingType: updated.intl_shipping_type,
+      lotId: updated.lot_id,
+      boughtAt: updated.bought_at?.toISOString() ?? null,
+      endTime: updated.end_time?.toISOString() ?? null,
+      createdAt: updated.created_at.toISOString(),
+      updatedAt: updated.updated_at.toISOString(),
+      deliveryStages: stages,
+      isDeliveried,
+      shippingPrice: null,
+    },
+    message: typeChanged
+      ? "International shipping type updated (lot assignment cleared; re-assign lot if needed)"
+      : "International shipping type unchanged",
+  });
+}
+
 export async function updateAuctionStatus(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   if (isNaN(id)) {
@@ -1470,38 +1583,25 @@ export async function updateDomesticShipping(req: Request, res: Response) {
   });
 }
 
-/** Users with items ready for domestic batch: lot arrived (is_arrived), intl+product PAID, stage 3 not paid yet. */
+/** Users with items ready for domestic batch — same rules as GET .../domestic-shipping-queue/:userId/items. */
 export async function listDomesticShippingQueue(req: Request, res: Response) {
   const stageTypeId = await getDomesticCustomerStageTypeId();
 
   const pendingAr = await prisma.purchaseRequest.findMany({
     where: {
       user_id: { not: null },
-      lot_id: { not: null },
-      lot: { is_arrived: true },
-      delivery_stages: {
-        some: { stage_type_id: stageTypeId, is_paid: false },
-      },
-      AND: [
-        {
-          payment_obligations: {
-            some: { obligation_type: { code: "PRODUCT_FULL" }, status: "PAID" },
-          },
-        },
-        {
-          payment_obligations: {
-            some: {
-              obligation_type: { code: "INTL_SHIPPING" },
-              status: "PAID",
-            },
-          },
-        },
-      ],
+      ...buildDomesticQueueBaseWhere(stageTypeId),
     },
     include: {
       user: { select: { id: true, user_code: true, username: true } },
       lot: {
-        select: { id: true, lot_code: true, is_arrived: true, arrive_at: true },
+        select: {
+          id: true,
+          lot_code: true,
+          intl_shipping_type: true,
+          is_arrived: true,
+          arrive_at: true,
+        },
       },
     },
   });
@@ -1547,6 +1647,7 @@ export async function listDomesticShippingQueue(req: Request, res: Response) {
       const lots: {
         id: number;
         lotCode: string | null;
+        intlShippingType: string | null;
         isArrived: boolean;
         arriveAt: string | null;
       }[] = [];
@@ -1556,6 +1657,7 @@ export async function listDomesticShippingQueue(req: Request, res: Response) {
           lots.push({
             id: ar.lot.id,
             lotCode: ar.lot.lot_code,
+            intlShippingType: ar.lot.intl_shipping_type,
             isArrived: ar.lot.is_arrived,
             arriveAt: ar.lot.arrive_at?.toISOString() ?? null,
           });
@@ -1576,8 +1678,8 @@ export async function listDomesticShippingQueue(req: Request, res: Response) {
 }
 
 /**
- * Drill-down for modal: all auction items for one user that match the same domestic-queue rules
- * as GET /domestic-shipping-queue (lot arrived, product+intl PAID, stage 3 is_paid false).
+ * Drill-down for modal: same purchase_request rows as GET /domestic-shipping-queue for this user
+ * (buildDomesticQueueBaseWhere + user_id; excludes rows already linked to domestic_shipment / domestic_shipment_item).
  */
 export async function getDomesticShippingQueueItems(
   req: Request,

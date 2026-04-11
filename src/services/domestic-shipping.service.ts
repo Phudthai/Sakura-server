@@ -24,14 +24,14 @@ export async function getDomesticCustomerStageTypeId(): Promise<number> {
 }
 
 /**
- * Same filters as GET /check-status/domestic-pending-items (getDomesticShippingPendingItemsForUser).
+ * Shared PR filters for domestic queue: lot arrived, rows not yet assigned to a domestic shipment batch,
+ * stage 3 unpaid, PRODUCT_FULL + INTL_SHIPPING PAID.
+ * Used by GET /backoffice/domestic-shipping-queue and getDomesticShippingPendingItemsForUser.
  */
-export function buildDomesticPendingAuctionWhere(
-  userId: number,
+export function buildDomesticQueueBaseWhere(
   stageTypeId: number,
 ): Prisma.PurchaseRequestWhereInput {
   return {
-    user_id: userId,
     lot_id: { not: null },
     lot: { is_arrived: true },
     domestic_shipment_id: null,
@@ -54,6 +54,19 @@ export function buildDomesticPendingAuctionWhere(
         },
       },
     ],
+  };
+}
+
+/**
+ * Same filters as GET /check-status/domestic-pending-items (getDomesticShippingPendingItemsForUser).
+ */
+export function buildDomesticPendingAuctionWhere(
+  userId: number,
+  stageTypeId: number,
+): Prisma.PurchaseRequestWhereInput {
+  return {
+    user_id: userId,
+    ...buildDomesticQueueBaseWhere(stageTypeId),
   };
 }
 
@@ -84,6 +97,7 @@ export type DomesticPendingItemPayload = {
     lot: {
       id: number;
       lotCode: string | null;
+      intlShippingType: string | null;
       isArrived: boolean;
       arriveAt: string | null;
     } | null;
@@ -117,6 +131,7 @@ export async function getDomesticShippingPendingItemsForUser(
         select: {
           id: true,
           lot_code: true,
+          intl_shipping_type: true,
           is_arrived: true,
           arrive_at: true,
         },
@@ -168,6 +183,7 @@ export async function getDomesticShippingPendingItemsForUser(
         ? {
             id: r.lot.id,
             lotCode: r.lot.lot_code,
+            intlShippingType: r.lot.intl_shipping_type,
             isArrived: r.lot.is_arrived,
             arriveAt: r.lot.arrive_at?.toISOString() ?? null,
           }

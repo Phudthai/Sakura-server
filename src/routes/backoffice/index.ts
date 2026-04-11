@@ -19,6 +19,7 @@ import paymentRoutes from './payment.routes'
 import slipSubmissionsRoutes from './slip-submissions.routes'
 import walletRoutes from './wallet.routes'
 import exchangeRateRoutes from './exchange-rate.routes'
+import notificationsRoutes from './notifications.routes'
 
 const router = Router()
 
@@ -32,6 +33,7 @@ router.use('/payment-obligations', paymentRoutes)
 router.use('/slip-submissions', slipSubmissionsRoutes)
 router.use('/wallet', walletRoutes)
 router.use(exchangeRateRoutes)
+router.use('/notifications', notificationsRoutes)
 router.get('/users', requireAuth(['ADMIN', 'STAFF']), usersController.listTeamUsers)
 router.patch('/users/:id', requireAuth(['ADMIN']), usersController.updateBackofficeUser)
 router.get('/users/:id/wallet', requireAuth(['ADMIN', 'STAFF']), walletController.getUserWallet)

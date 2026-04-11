@@ -4,7 +4,12 @@
  * @module @sakura/api/services
  *
  * Reads B เมอคาริ กดเว็บ.xlsx sheets Bแอร์369, Cเรือ369
- * Maps rows by userId (column A = external_id)
+ * Purchase rows: purchase_mode BUYOUT, buyout_source mercari (Mercari กดซื้อ).
+ * Row match: column B (handle) → lookup ID in public/B Master.xlsx sheet "master"; must equal user external_id.
+ * Legacy: column A external_id still used if B not found in Master.
+ *
+ * Column B: handle (Master lookup) + sync `users.username` only (`name` stays from registration). Column C: marketplace (mercari). Column D: web. Column G: item URL. Column H: image fallback when not using mercdn.
+ * Column F: ถึงแล้ว (arrived-at-Japan flag). Column O: เวลาที่ถึง → stage 1 delivered_at.
  */
 
 import * as XLSX from 'xlsx'
@@ -14,6 +19,8 @@ import { bahtRoundUp } from '../../packages/shared/src'
 import { jpyToBaht } from './exchange-rate.service'
 
 const EXCEL_PATH = path.join(process.cwd(), 'public', 'B เมอคาริ กดเว็บ.xlsx')
+const MASTER_PATH = path.join(process.cwd(), 'public', 'B Master.xlsx')
+const MASTER_SHEET = 'master'
 const SHEET_AIR = 'Bแอร์369'
 const SHEET_SEA = 'Cเรือ369'
 
@@ -79,6 +86,80 @@ function toString(val: unknown): string | null {
   return s === '' ? null : s
 }
 
+/** Keys in B Master.xlsx column A (handles). */
+function normalizeMasterLookupKey(s: string): string {
+  return s.trim()
+}
+
+/**
+ * Build map: Master col A (handle) → col B (ID e.g. B12). Sheet "master" in B Master.xlsx.
+ */
+function loadMasterUsernameToIdMap(errors: string[]): Map<string, string> {
+  const map = new Map<string, string>()
+  try {
+    const wb = XLSX.readFile(MASTER_PATH)
+    const sheet = wb.Sheets[MASTER_SHEET]
+    if (!sheet) {
+      errors.push(`Master sheet "${MASTER_SHEET}" not found in B Master.xlsx`)
+      return map
+    }
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as unknown[][]
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i] as unknown[]
+      const keyRaw = toString(row[0])
+      const idRaw = toString(row[1])
+      if (!keyRaw || !idRaw) continue
+      if (keyRaw === 'ค่าส่ง' || idRaw === 'ID') continue
+      const key = normalizeMasterLookupKey(keyRaw)
+      if (!map.has(key)) map.set(key, idRaw)
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    errors.push(`B Master.xlsx read failed: ${msg}`)
+  }
+  return map
+}
+
+/**
+ * External ID for row: prefer B → Master lookup; else column A (legacy).
+ */
+function resolveRowExternalId(parsed: ExcelRow, masterMap: Map<string, string>): string | null {
+  if (parsed.sheetUsername) {
+    const id = masterMap.get(normalizeMasterLookupKey(parsed.sheetUsername))
+    if (id) return id
+  }
+  return parsed.id
+}
+
+function isCellEmpty(val: unknown): boolean {
+  if (val === null || val === undefined || val === '') return true
+  if (typeof val === 'string' && val.trim() === '') return true
+  return false
+}
+
+/** True when column F marks “ถึงแล้ว” (Mercari sheet). */
+function parseArrivedFlag(val: unknown): boolean {
+  if (isCellEmpty(val)) return false
+  if (typeof val === 'boolean') return val
+  if (typeof val === 'number') return val === 1
+  const s = String(val).trim()
+  const lower = s.toLowerCase()
+  if (['no', 'false', '0', 'n', 'ยัง', 'ยังไม่'].includes(lower)) return false
+  if (['ถึงแล้ว', 'true', 'yes', 'y', '1', 'x', 'v', 'ใช่', '✓', '√'].includes(lower) || lower === 'ok') return true
+  return true
+}
+
+/**
+ * Stage 1 (JP) is DELIVERED when F says arrived, or when F is empty but O has a date (legacy rows).
+ * If F is non-empty and explicitly not arrived, do not mark even if O has a date.
+ */
+function shouldMarkStage1Delivered(fVal: unknown, toJapanAt: Date | null): boolean {
+  const fEmpty = isCellEmpty(fVal)
+  if (!fEmpty && !parseArrivedFlag(fVal)) return false
+  if (!fEmpty && parseArrivedFlag(fVal)) return true
+  return fEmpty && toJapanAt != null
+}
+
 /** Strip query params (everything from ? onwards) */
 function stripQueryParams(str: string): string {
   const idx = str.indexOf('?')
@@ -99,9 +180,70 @@ function buildMercariImageUrl(itemId: string): string {
   return `https://static.mercdn.net/item/detail/orig/photos/${itemId}_1.jpg`
 }
 
+function urlLooksLikeMercari(url: string): boolean {
+  return /mercari\.com/i.test(url)
+}
+
+/** Column C: marketplace label (Latin/Thai mercari). */
+function isMercariMarketplace(marketplaceCell: unknown): boolean {
+  const s = toString(marketplaceCell)
+  if (!s) return false
+  const lower = s.toLowerCase()
+  if (lower === 'mercari' || lower.includes('mercari')) return true
+  if (s.includes('เมอคาริ')) return true
+  return false
+}
+
+/** True when path last segment looks like a Mercari listing id (m + digits). */
+function isMercariListingId(id: string): boolean {
+  return /^m\d+$/i.test(id)
+}
+
+/**
+ * static.mercdn.net/.../photos/{itemId}_1.jpg from column G.
+ * If URL ends with m########, always build mercdn URL (column C may be Thai "เมอคาริ" or other labels).
+ * Otherwise same rules as before; fallback column H.
+ */
+function resolveImportImageUrl(marketplaceCell: unknown, urlClean: string, imageColH: string | null): string | null {
+  const id = extractItemIdFromUrl(urlClean)
+  if (id && isMercariListingId(id)) {
+    return buildMercariImageUrl(id)
+  }
+
+  const marketplaceEmpty = isCellEmpty(marketplaceCell)
+  const mercM = isMercariMarketplace(marketplaceCell)
+  const urlMerc = urlLooksLikeMercari(urlClean)
+
+  if (mercM || (marketplaceEmpty && urlMerc)) {
+    return id ? buildMercariImageUrl(id) : imageColH
+  }
+
+  return imageColH
+}
+
+/** item_id: prefer Mercari m-id from URL; else legacy rules for other marketplaces. */
+function resolveImportItemId(marketplaceCell: unknown, urlClean: string): string | null {
+  const id = extractItemIdFromUrl(urlClean)
+  if (id && isMercariListingId(id)) {
+    return id
+  }
+
+  const marketplaceEmpty = isCellEmpty(marketplaceCell)
+  const mercM = isMercariMarketplace(marketplaceCell)
+  const urlMerc = urlLooksLikeMercari(urlClean)
+
+  if (mercM || (marketplaceEmpty && urlMerc) || (marketplaceEmpty && !urlMerc)) {
+    return id
+  }
+
+  return null
+}
+
 interface ExcelRow {
+  /** Column A — external ID when present; often empty (use B + B Master.xlsx). */
   id: string | null
-  userCode: string | null
+  /** Column B — handle; maps to Master → ID, and to `users.username` (not `name`). */
+  sheetUsername: string | null
   web: string | null
   title: string | null
   url: string | null
@@ -111,16 +253,22 @@ interface ExcelRow {
   weightGram: number | null
   shippingAmount: number | null
   toJapanAt: Date | null
+  markStage1Delivered: boolean
   lotDeliveredAt: Date | null
   buyDate: Date | null
   lotRaw: string | null
+  /** Column C: marketplace (mercari). G: product URL. H: image fallback if not using mercdn. */
+  marketplaceC: unknown
 }
 
 function parseRow(row: unknown[], shippingColIndex: number): ExcelRow {
+  const fCell = getCell(row, 5)
+  const toJapanAt = parseExcelDate(getCell(row, 14))
   return {
     id: toString(getCell(row, 0)),
-    userCode: toString(getCell(row, 1)),
-    web: toString(getCell(row, 2)),
+    sheetUsername: toString(getCell(row, 1)),
+    marketplaceC: row[2],
+    web: toString(getCell(row, 3)),
     title: toString(getCell(row, 4)),
     url: toString(getCell(row, 6)),
     imageUrl: toString(getCell(row, 7)),
@@ -128,7 +276,8 @@ function parseRow(row: unknown[], shippingColIndex: number): ExcelRow {
     productPriceBaht: toInt(getCell(row, 9)),
     weightGram: toInt(getCell(row, 10)),
     shippingAmount: toInt(getCell(row, shippingColIndex)),
-    toJapanAt: parseExcelDate(getCell(row, 14)),
+    toJapanAt,
+    markStage1Delivered: shouldMarkStage1Delivered(fCell, toJapanAt),
     lotDeliveredAt: parseLotToDeliveredAt(getCell(row, 15)),
     buyDate: parseExcelDate(getCell(row, 18)),
     lotRaw: toString(getCell(row, 15)),
@@ -156,6 +305,8 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
       return { imported, errors }
     }
 
+    const masterMap = loadMasterUsernameToIdMap(errors)
+
     const obligationTypes = await prisma.paymentObligationType.findMany({
       where: { code: { in: ['PRODUCT_FULL', 'INTL_SHIPPING'] } },
     })
@@ -169,6 +320,8 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
       return { imported, errors }
     }
 
+    let usernameFromSheetSynced = false
+
     for (const { name, obligationCode, intlShippingType, shippingCol } of sheetsToProcess) {
       const sheet = workbook.Sheets[name]
       if (!sheet) continue
@@ -181,7 +334,37 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
         const row = dataRows[i] as unknown[]
         const parsed = parseRow(row, shippingCol)
 
-        if (parsed.id !== userId) continue
+        const resolvedExternalId = resolveRowExternalId(parsed, masterMap)
+        if (resolvedExternalId !== userId) {
+          if (parsed.sheetUsername && !resolvedExternalId) {
+            errors.push(
+              `Row ${i + 2} (${name}): no ID in B Master.xlsx for handle "${parsed.sheetUsername}" (column B)`,
+            )
+          }
+          continue
+        }
+
+        if (!usernameFromSheetSynced && parsed.sheetUsername) {
+          usernameFromSheetSynced = true
+          try {
+            await prisma.user.update({
+              where: { id: dbUserId },
+              data: {
+                username: parsed.sheetUsername,
+              },
+            })
+          } catch (err) {
+            const code = err && typeof err === 'object' && 'code' in err ? (err as { code: string }).code : ''
+            if (code === 'P2002') {
+              errors.push(
+                `Row ${i + 2} (${name}): username "${parsed.sheetUsername}" is already taken`,
+              )
+            } else {
+              const msg = err instanceof Error ? err.message : String(err)
+              errors.push(`Row ${i + 2} (${name}): could not set username from sheet: ${msg}`)
+            }
+          }
+        }
 
         if (!parsed.url) {
           errors.push(`Row ${i + 2} (${name}): url required`)
@@ -195,8 +378,8 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
           }
 
           const urlClean = stripQueryParams(parsed.url)
-          const itemId = extractItemIdFromUrl(urlClean)
-          const imageUrl = itemId ? buildMercariImageUrl(itemId) : null
+          const itemId = resolveImportItemId(parsed.marketplaceC, urlClean)
+          const imageUrl = resolveImportImageUrl(parsed.marketplaceC, urlClean, parsed.imageUrl)
 
           let lotId: number | null = null
           if (parsed.lotRaw && intlShippingType) {
@@ -225,6 +408,8 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
               lot_id: lotId,
               bid_result: 'won',
               status: 'completed',
+              purchase_mode: 'BUYOUT',
+              buyout_source: 'mercari',
             },
           })
 
@@ -267,21 +452,28 @@ export async function importFromExcel(userId: string, dbUserId: number): Promise
             })),
           })
 
-          const createdIds = await prisma.deliveryStage.findMany({
-            where: { purchase_request_id: auctionRequest.id },
-            orderBy: { id: 'asc' },
-          })
-
-          if (parsed.toJapanAt && createdIds[0]) {
-            await prisma.deliveryStage.update({
-              where: { id: createdIds[0].id },
-              data: { status: 'DELIVERED', delivered_at: parsed.toJapanAt },
+          if (parsed.markStage1Delivered) {
+            await prisma.deliveryStage.updateMany({
+              where: {
+                purchase_request_id: auctionRequest.id,
+                stage_type: { code: 'STAGE_1_JP_WAREHOUSE' },
+              },
+              data: {
+                status: 'DELIVERED',
+                delivered_at: parsed.toJapanAt,
+              },
             })
           }
-          if (parsed.lotDeliveredAt && createdIds[1]) {
-            await prisma.deliveryStage.update({
-              where: { id: createdIds[1].id },
-              data: { status: 'DELIVERED', delivered_at: parsed.lotDeliveredAt },
+          if (parsed.lotDeliveredAt) {
+            await prisma.deliveryStage.updateMany({
+              where: {
+                purchase_request_id: auctionRequest.id,
+                stage_type: { code: 'STAGE_2_INTL_THAILAND' },
+              },
+              data: {
+                status: 'DELIVERED',
+                delivered_at: parsed.lotDeliveredAt,
+              },
             })
           }
 

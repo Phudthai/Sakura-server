@@ -108,6 +108,11 @@ router.patch(
   purchaseRequestController.updateAuctionWeightGram,
 );
 router.patch(
+  "/purchase-requests/:id/intl-shipping-type",
+  requireAuth(["ADMIN", "STAFF"]),
+  purchaseRequestController.updatePurchaseRequestIntlShippingType,
+);
+router.patch(
   "/purchase-requests/:id",
   requireAuth(["ADMIN", "STAFF"]),
   purchaseRequestController.updateAuctionStatus,

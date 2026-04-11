@@ -222,6 +222,11 @@ export const updatePurchaseRequestWeightGramSchema = z.object({
   weight_gram: z.number().int().positive("weight_gram must be positive"),
 });
 
+/** Backoffice: change air/sea only while weight_gram is still unset */
+export const updatePurchaseRequestIntlShippingTypeSchema = z.object({
+  intl_shipping_type: z.enum(["air", "sea"]),
+});
+
 export const updateDomesticShippingSchema = z.object({
   amount_baht: z.number().positive("amount_baht must be positive"),
 });
@@ -286,6 +291,9 @@ export type UpdatePurchaseRequestNoteInput = z.infer<
 >;
 export type UpdatePurchaseRequestWeightGramInput = z.infer<
   typeof updatePurchaseRequestWeightGramSchema
+>;
+export type UpdatePurchaseRequestIntlShippingTypeInput = z.infer<
+  typeof updatePurchaseRequestIntlShippingTypeSchema
 >;
 export type ApproveBidInput = z.infer<typeof approveBidSchema>;
 export type RejectBidInput = z.infer<typeof rejectBidSchema>;

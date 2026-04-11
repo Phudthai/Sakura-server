@@ -11,8 +11,9 @@
     "db:generate": "dotenv -e .env -- prisma generate --schema packages/database/prisma/schema.prisma",
     "db:migrate": "dotenv -e .env -- prisma migrate deploy --schema packages/database/prisma/schema.prisma",
     "db:migrate:resolve": "dotenv -e .env -- prisma migrate resolve --applied 20260316000002_add_slip_submissions --schema packages/database/prisma/schema.prisma",
-    "db:seed": "dotenv -e .env -- tsx packages/database/prisma/seed.ts",
-    "db:reset": "dotenv -e .env -- prisma migrate reset --schema packages/database/prisma/schema.prisma --force"
+    "db:seed": "dotenv -e .env -- prisma generate --schema packages/database/prisma/schema.prisma && dotenv -e .env -- tsx scripts/seed.ts",
+    "db:reset": "dotenv -e .env -- prisma migrate reset --schema packages/database/prisma/schema.prisma --force",
+    "reset:db": "dotenv -e .env -- prisma generate --schema packages/database/prisma/schema.prisma && dotenv -e .env -- tsx scripts/reset-dev-data.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.10.2",
@@ -45,6 +46,6 @@
   },
   "prisma": {
     "schema": "packages/database/prisma/schema.prisma",
-    "seed": "tsx packages/database/prisma/seed.ts"
+    "seed": "tsx scripts/seed.ts"
   }
 }
